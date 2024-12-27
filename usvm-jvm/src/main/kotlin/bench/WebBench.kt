@@ -105,7 +105,7 @@ private class BenchCp(
 }
 
 private fun loadBench(db: JcDatabase, cpFiles: List<File>, classes: List<File>, dependencies: List<File>) = runBlocking {
-    val features = listOf(UnknownClasses, JcStringConcatTransformer)
+    val features = listOf(UnknownClasses, JcStringConcatTransformer, JcRepositoryTransformer, JcDataclassConstructorTransformer)
     val cp = db.classpathWithApproximations(cpFiles, features)
 
     val classLocations = cp.locations.filter { it.jarOrFolder in classes }
@@ -188,6 +188,8 @@ private fun generateTestClass(benchmark: BenchCp): BenchCp {
 
         classNode.write(cp, dir.resolve("$testClassName.class"), checkClass = true)
     }
+
+    DatabaseGenerator(cp, dir, repositories).generateJPADatabase()
 
     val startSpringClass = cp.findClassOrNull("generated.org.springframework.boot.StartSpring")!!
     startSpringClass.withAsmNode { startSpringAsmNode ->
