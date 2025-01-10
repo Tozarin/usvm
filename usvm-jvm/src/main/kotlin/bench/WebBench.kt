@@ -32,6 +32,8 @@ import org.usvm.api.util.JcTestInterpreter
 import org.usvm.logger
 import org.usvm.machine.JcMachine
 import org.usvm.machine.JcMachineOptions
+import org.usvm.machine.interpreter.JcDataclassTransformer
+import org.usvm.machine.interpreter.JcRepositoryTransformer
 import org.usvm.machine.interpreter.transformers.JcStringConcatTransformer
 import org.usvm.util.classpathWithApproximations
 import java.io.File
@@ -51,7 +53,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.nanoseconds
 
 private fun loadWebPetClinicBench(): BenchCp {
-    val petClinicDir = Path("/Users/michael/Documents/Work/spring-petclinic/build/libs/BOOT-INF")
+    val petClinicDir = Path("/Users/tozarin/Documents/kot/spring-petclinic/build/libs/BOOT-INF")
     return loadWebAppBenchCp(petClinicDir / "classes", petClinicDir / "lib").apply {
         entrypointFilter = { it.enclosingClass.simpleName.startsWith("PetClinicApplication") }
     }
@@ -80,7 +82,8 @@ private fun loadKlawBench(): BenchCp {
 
 fun main() {
     val benchCp = logTime("Init jacodb") {
-        loadKlawBench()
+        //loadKlawBench()
+        loadWebPetClinicBench()
     }
 
     logTime("Analysis ALL") {
@@ -105,7 +108,7 @@ private class BenchCp(
 }
 
 private fun loadBench(db: JcDatabase, cpFiles: List<File>, classes: List<File>, dependencies: List<File>) = runBlocking {
-    val features = listOf(UnknownClasses, JcStringConcatTransformer, JcRepositoryTransformer, JcDataclassConstructorTransformer)
+    val features = listOf(UnknownClasses, JcStringConcatTransformer, JcRepositoryTransformer, JcDataclassTransformer)
     val cp = db.classpathWithApproximations(cpFiles, features)
 
     val classLocations = cp.locations.filter { it.jarOrFolder in classes }
