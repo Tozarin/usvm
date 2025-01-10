@@ -54,3 +54,11 @@ val JcClassType.name: String
 
 val JcClassType.outerClassInstanceField: JcTypedField?
     get() = fields.singleOrNull { it.name == "this\$0" }
+
+val JcClassOrInterface.jvmDescriptor : String get() = "L${name.replace('.','/')};"
+val String.fromJvmDescriptor : String get() = this.drop(1).replace("/", ".")
+val String.genericTypes : List<String> get() = this
+    .substringAfter("<")
+    .substringBefore(">")
+    .split(";")
+    .map { it.fromJvmDescriptor }

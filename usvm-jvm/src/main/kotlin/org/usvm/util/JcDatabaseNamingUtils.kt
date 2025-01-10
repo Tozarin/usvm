@@ -1,0 +1,33 @@
+package org.usvm.util
+
+import org.jacodb.api.jvm.JcClassOrInterface
+import org.jacodb.api.jvm.JcField
+
+fun databaseName(name: String): String {
+
+    val newName = name
+        .replace(".", "_")
+        .replace(Regex("[a-z][A-Z]"))
+        { mr -> mr.value[0] + "_" + mr.value[1] }
+        .lowercase()
+
+    return newName
+}
+
+fun getTableName(clazz: JcClassOrInterface): String {
+    val name = clazz.annotations
+        .find { nameEquals(it, "Table") }
+        ?.values?.get("name")
+        ?: databaseName(clazz.simpleName)
+
+    return name as String
+}
+
+fun getColumnName(field: JcField): String {
+    val name = field.annotations
+        .find { nameEquals(it, "Column") }
+        ?.values?.get("name")
+        ?: databaseName(field.name)
+
+    return name as String
+}

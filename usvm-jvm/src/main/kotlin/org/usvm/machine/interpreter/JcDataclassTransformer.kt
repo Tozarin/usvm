@@ -15,33 +15,11 @@ val JcClassOrInterface.columns : List<JcField> get() = declaredFields.filter { i
 
 val JcClassOrInterface.initDesc : String get() = columns.joinToString { "L${it.type.typeName.replace(".", "/")};" }.let { "(${it})V" }
 
-object Foo : JcClassExtFeature {
-
-    override fun fieldsOf(clazz: JcClassOrInterface, originalFields: List<JcField>): List<JcField>? {
-        return super.fieldsOf(clazz, originalFields)
-    }
-
-    override fun methodsOf(clazz: JcClassOrInterface, originalMethods: List<JcMethod>): List<JcMethod>? {
-        return super.methodsOf(clazz, originalMethods)
-    }
-}
-
-object JcJPADataClassConstructorTransformer : JcClassExtFeature {
+object JcDataClassConstructorTransformer : JcClassExtFeature {
 
     private fun hasInitFromColumns(clazz: JcClassOrInterface, methods : List<JcMethod>) : Boolean {
         return methods.any { it.description.equals(clazz.initDesc) }
     }
-
-//    override fun methodsOf(clazz: JcClassOrInterface): List<JcMethod>? {
-//
-//        if (!clazz.isDataClass) return null
-//
-//        // cp.findClass("generated.org.springframework.boot.Test")
-//
-//        //assert(!hasInitFromColumns(clazz, cl))
-//
-//        return null
-//    }
 
     override fun methodsOf(clazz: JcClassOrInterface, originalMethods: List<JcMethod>): List<JcMethod>? {
 
@@ -63,7 +41,7 @@ object JcJPADataClassConstructorTransformer : JcClassExtFeature {
             ParameterInfo(col.type.typeName, i, 1, col.name, listOf())
         }
 
-        val features = clazz.classpath.features!!.toPersistentList().add(JcJPAGeneratedInitTransformer)
+        val features = clazz.classpath.features!!.toPersistentList().add(JcGeneratedInitTransformer)
 
         val blanckInit = JcMethodImpl(
             MethodInfo(
