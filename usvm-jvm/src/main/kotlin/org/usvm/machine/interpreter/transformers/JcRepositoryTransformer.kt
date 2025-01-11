@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter
+package org.usvm.machine.interpreter.transformers
 
 import org.antlr.v4.runtime.tree.AbstractParseTreeVisitor
 import org.antlr.v4.runtime.tree.ParseTree
@@ -28,6 +28,8 @@ private val JcClassOrInterface.getDataClass: JcClassOrInterface get() {
 }
 private val JcAnnotation.isQuery : Boolean get() = jcClass?.simpleName.equals("Query")
 private val JcMethod.query : String? get () = annotations.find { it.isQuery }?.values?.get("value") as String?
+
+
 
 
 object JcRepositoryTransformer : JcClassExtFeature {
@@ -60,7 +62,8 @@ object JcRepositoryTransformer : JcClassExtFeature {
     }
 
 
-    private class JPAQueryVisitor() : AbstractParseTreeVisitor<JcInstList<JcInst>>(), HqlParserVisitor<JcInstList<JcInst>> {
+    private class JPAQueryVisitor() : AbstractParseTreeVisitor<JcInstList<JcInst>>(),
+        HqlParserVisitor<JcInstList<JcInst>> {
 
         fun visitNullable(ctx: ParseTree?) : JcInstList<JcInst> {
 
