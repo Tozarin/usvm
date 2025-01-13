@@ -7,13 +7,18 @@ import org.jacodb.api.jvm.cfg.JcInst
 import org.jacodb.api.jvm.cfg.JcInstList
 import org.jacodb.api.jvm.cfg.JcInstLocation
 import org.jacodb.impl.cfg.JcInstLocationImpl
+import org.usvm.util.JcTableInfoCollector
+import org.usvm.util.TableInfo
 
 val JcMethod.isGeneratedInit : Boolean get() = annotations.any { it.jcClass?.simpleName.equals("GeneratedInit") }
 val JcClassOrInterface.freeLineNumber : Int get() = declaredMethods.maxOf {
     it.instList.lastOrNull()?.lineNumber ?: -1
 } + 1
 
-object JcGeneratedInitTransformer : JcInstExtFeature {
+class JcGeneratedInitTransformer(
+    val classTable : TableInfo,
+    val collector : JcTableInfoCollector
+) : JcInstExtFeature {
 
     // TODO: check in debug
     override fun transformInstList(method: JcMethod, list: JcInstList<JcInst>): JcInstList<JcInst> {

@@ -1,6 +1,9 @@
 package org.usvm.machine.interpreter.transformers
 
 import org.jacodb.api.jvm.JcInstExtFeature
+import org.usvm.util.TableInfo
 
-object JcGeneratedGetIdTransformer : JcInstExtFeature {
+class JcGeneratedGetIdTransformer(
+    val classTable : TableInfo
+) : JcInstExtFeature {
 }

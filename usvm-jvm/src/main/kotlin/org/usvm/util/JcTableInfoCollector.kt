@@ -8,6 +8,7 @@ import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.TypeName
 import org.jacodb.api.jvm.ext.fields
 import org.jacodb.api.jvm.ext.findClass
+import org.usvm.instrumentation.util.toJcClassOrInterface
 
 class JcTableInfoCollector(
     private val cp : JcClasspath
@@ -37,8 +38,9 @@ class JcTableInfoCollector(
             .let { ColumnInfo(getColumnName(it), it.type) }
 
         val tableColumns = mutableListOf<ColumnInfo>()
+        val relations = mutableListOf<RelationType>()
 
-        tablesInfo.getOrPut(name) { TableInfo(name, idColumn, tableColumns) }
+        tablesInfo.getOrPut(name) { TableInfo(name, idColumn, tableColumns, relations, clazz) }
         val parentTable = tablesInfo[name]!!
 
         columns.forEach { col ->
@@ -62,7 +64,8 @@ class JcTableInfoCollector(
             collectTable(childClass)
             val childTable = tablesInfo[getTableName(childClass)]!!
 
-            val relation = RelationType.fromField(col)
+            val relation = RelationType.fromField(col)!!
+            relations.add(relation)
 
             when(relation) {
                 is RelationType.OneToOne -> {
@@ -79,17 +82,17 @@ class JcTableInfoCollector(
 
                     if (relation.mappedBy != null) return@forEach
 
-                    if (relation.join == null) {
+                    if (relation.withTable) {
 
                         val betweenTableName = "${parentTable.name}_${childTable.name}"
                         val parentJk = parentTable.jkColumnInfo()
                         val childJk = childTable.jkColumnInfo()
-                        val betweenTable = TableInfo(betweenTableName, null, listOf(parentJk, childJk))
+                        val betweenTable = TableInfo(betweenTableName, listOf(parentJk, childJk))
                         tablesInfo[betweenTableName] = betweenTable
                     }
                     else {
-                        val colInfo = ColumnInfo(relation.join.name!!, parentTable.idColumn!!.type)
-                        childTable.insetColumn(colInfo)
+                        val colInfo = ColumnInfo(relation.join!!.name!!, parentTable.idColumn!!.type)
+                        childTable.insertColumn(colInfo)
                     }
 
                 }
@@ -120,25 +123,36 @@ class JcTableInfoCollector(
                         if (rJoinTable?.inverseJoinCol == null) childTable.jkColumnInfo()
                         else ColumnInfo(rJoinTable.inverseJoinCol.name!!, childTable.idColumn!!.type)
 
-                    val betweenTable = TableInfo(betweenTableName, null, listOf(parentJk, childJk))
+                    val betweenTable = TableInfo(betweenTableName, listOf(parentJk, childJk))
                     tablesInfo[betweenTableName] = betweenTable
                 }
-                else -> assert(false)
             }
         }
 
         return tablesInfo[name]!!
     }
 
+    fun findSubTable(rel : RelationType) : TableInfo? {
+        val subClass = rel.origField.signature?.genericTypes?.get(0)?.let { cp.findClass(it) }
+            ?: rel.origField.type.toJcClassOrInterface(cp)!!
+        return tablesInfo.get(getTableName(subClass))
+    }
 }
 
 class TableInfo(
     val name : String,
     val idColumn : ColumnInfo?,
-    val columns : List<ColumnInfo>
+    val columns : List<ColumnInfo>,
+    val relations : List<RelationType>,
+    val origClass : JcClassOrInterface?
 ) {
 
     val hasId: Boolean = idColumn != null
+
+    constructor(
+        name : String,
+        columns : List<ColumnInfo>
+    ) : this(name, null, columns, listOf(), null)
 
     fun jkColumnInfo(): ColumnInfo {
         val name = "${name}_${idColumn!!.name}"
@@ -146,7 +160,7 @@ class TableInfo(
         return ColumnInfo(name, type)
     }
 
-    fun insetColumn(col: ColumnInfo) {
+    fun insertColumn(col: ColumnInfo) {
         columns.toMutableList().add(col)
     }
 }
@@ -156,7 +170,11 @@ data class ColumnInfo(
     val type: TypeName
 )
 
-sealed class RelationType {
+sealed class RelationType(
+    val origField: JcField
+) {
+
+    abstract val withTable : Boolean
 
     data class Join(
         val name : String?
@@ -168,24 +186,36 @@ sealed class RelationType {
         val inverseJoinCol : Join?
     )
 
-    data class OneToOne(
+    class OneToOne(
         val join : Join?,
-        val mappedBy : String?
-    ) : RelationType()
+        val mappedBy : String?,
+        origField : JcField
+    ) : RelationType(origField) {
+        override val withTable: Boolean = false
+    }
 
-    data class OneToMany(
+    class OneToMany(
         val join : Join?,
-        val mappedBy : String?
-    ) : RelationType()
+        val mappedBy : String?,
+        origField : JcField
+    ) : RelationType(origField) {
+        override val withTable : Boolean = join == null
+    }
 
-    data class ManyToOne(
-        val join : Join?
-    ) : RelationType()
+    class ManyToOne(
+        val join : Join?,
+        origField : JcField
+    ) : RelationType(origField) {
+        override val withTable: Boolean = false
+    }
 
-    data class ManyToMany(
+    class ManyToMany(
         val joinTable : JoinTable?,
-        val mappedBy: String?
-    ) : RelationType()
+        val mappedBy: String?,
+        origField : JcField
+    ) : RelationType(origField) {
+        override val withTable: Boolean = true
+    }
 
     companion object {
 
@@ -202,18 +232,18 @@ sealed class RelationType {
             find(annotations, "OneToOne")
                 ?.let {
                     val mappedBy = it.values["mappedBy"] as String?
-                    return OneToOne(join, mappedBy)
+                    return OneToOne(join, mappedBy, field)
                 }
 
             find(annotations, "OneToMany")
                 ?.let {
                     val mappedBy = it.values["mappedBy"] as String?
-                    return OneToMany(join, mappedBy)
+                    return OneToMany(join, mappedBy, field)
                 }
 
             find(annotations, "ManyToOne")
                 ?.let {
-                    return ManyToOne(join)
+                    return ManyToOne(join, field)
                 }
 
             find(annotations, "ManyToMany")
@@ -226,9 +256,9 @@ sealed class RelationType {
                                 ?.first()?.let { join(it as JcAnnotation) } // TODO: many joins columns
                             val inverseJoinCol = (it.values["inverseJoinColumns"] as List<*>?)
                                 ?.first()?.let { join(it as JcAnnotation) }
-                            return  ManyToMany(JoinTable(name, joinCol, inverseJoinCol), mappedBy)
+                            return  ManyToMany(JoinTable(name, joinCol, inverseJoinCol), mappedBy, field)
                         }
-                    return ManyToMany(joinTable, mappedBy)
+                    return ManyToMany(joinTable, mappedBy, field)
                 }
 
             return null;
