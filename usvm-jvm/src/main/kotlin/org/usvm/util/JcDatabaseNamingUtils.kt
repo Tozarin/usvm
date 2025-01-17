@@ -31,3 +31,20 @@ fun getColumnName(field: JcField): String {
 
     return name as String
 }
+
+fun getBtwTableName(clazz: JcClassOrInterface, field : JcField) : String {
+    return "${getTableName(clazz)}_${getColumnName(field)}"
+}
+
+fun getBtwTableName(clazz: JcClassOrInterface, rel : RelationType) : String {
+
+    if (rel is RelationType.ManyToMany) {
+        rel.joinTable?.name?.let { return it }
+    }
+
+    return getBtwTableName(clazz, rel.origField)
+}
+
+fun getSetFieldName(rel : RelationType) : String {
+    return "\$${rel.origField.name}IdSet"
+}
