@@ -66,7 +66,7 @@ class DatabaseGenerator(
             classNode.fields.removeIf { it.name.equals("_blanckAdd") }
             rawInstList.removeAll(listOf(2..19).flatten().map { rawInstList[it] })
 
-            tableInfoCollector.tablesInfo.values.forEach {
+            tableInfoCollector.allTables().forEach {
                 it.generate(this, localVars, classNode, rawInstList)
             }
 
@@ -108,6 +108,8 @@ fun TableInfo.generate(
     classNode: ClassNode,
     rawInstList: JcMutableInstList<JcRawInst>
 ) {
+    val idColumn = if (this is TableInfo.TableWithIdInfo) idColumn else null
+    val hasId = idColumn != null
     idColumn?.let { columns.toMutableList().add(it) }
     val allColumns = columns.sortedBy { it.name }
 

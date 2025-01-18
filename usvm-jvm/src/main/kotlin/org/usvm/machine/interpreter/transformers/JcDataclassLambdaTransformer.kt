@@ -41,7 +41,7 @@ import org.usvm.machine.interpreter.transformers.JcDataclassTransformer
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
 import org.usvm.machine.interpreter.transformers.SELECT_BTW_ANNOT
-import org.usvm.util.RelationType
+import org.usvm.util.Relation
 import org.usvm.util.TableInfo
 import org.usvm.util.contains
 
@@ -65,19 +65,20 @@ private const val JAVA_SET = "java.util.Set"
 
 class JcDataclassLambdaTransformer (
     val cp : JcClasspath,
-    val classTable : TableInfo,
-    val subTable : TableInfo,
+    val classTable : TableInfo.TableWithIdInfo,
+    val subTable : TableInfo.TableWithIdInfo,
     val btwTable : TableInfo?,
-    val rel : RelationType
+    val rel : Relation
 ) : JcMethodExtFeature {
 
-    val clazz = classTable.origClass!!
+    val clazz = classTable.origClass
     val classType = clazz.typename.toJcType(cp)!!
     val thisVal = JcThis(classType)
-    val idType = classTable.idColumn!!.type.toJcType(cp)!!
+    val idType = classTable.idColumn.type.toJcType(cp)!!
+    val idField = classTable.idColumn.origField
 
-    val subClass = subTable.origClass!!
-    val subIdType = subTable.idColumn!!.type.toJcType(cp)!!
+    val subClass = subTable.origClass
+    val subIdType = subTable.idColumn.type.toJcType(cp)!!
     val subType = subClass.toType()
     val subGetIdMethod = subType.declaredMethods.single { it.name == "\$getId" && it.parameters.isEmpty() }
     val subGetIdRef = VirtualMethodRefImpl.of(subType, subGetIdMethod)
@@ -150,12 +151,12 @@ class JcDataclassLambdaTransformer (
     private fun BlockGenerationContext.generateBtwFilter(method: JcMethod) {
 
         val rowId = nextLocalVar("idRow", cp.objectType)
-        val ix = btwTable!!.indexOfField(classTable.idField!!)
+        val ix = btwTable!!.indexOfField(idField)
         val access = JcArrayAccess(method.parameters.first().toArgument, JcInt(ix, cp.int), cp.objectType)
         addInstruction { loc -> JcAssignInst(loc, rowId, access) }
 
         val idVar = nextLocalVar("id", idType)
-        val idVal = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), classTable.idField, JcSubstitutorImpl()))
+        val idVal = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), idField, JcSubstitutorImpl()))
         addInstruction { loc -> JcAssignInst(loc, idVar, idVal) }
 
         val endOfIf : JcInstRef
@@ -186,7 +187,7 @@ class JcDataclassLambdaTransformer (
     private fun BlockGenerationContext.generateBtwSelect(method: JcMethod) {
 
         val rowSel = nextLocalVar("rowSel", cp.objectType)
-        val ix = btwTable!!.indexOfField(subTable.idField!!)
+        val ix = btwTable!!.indexOfField(subTable.idColumn.origField)
         val access = JcArrayAccess(method.parameters.first().toArgument, JcInt(ix, cp.int), cp.objectType)
         addInstruction { loc -> JcAssignInst(loc, rowSel, access) }
 

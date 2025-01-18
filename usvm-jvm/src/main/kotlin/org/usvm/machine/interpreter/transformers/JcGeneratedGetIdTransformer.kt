@@ -22,7 +22,7 @@ val JcMethod.generatedGetId : Boolean get() = contains(this.annotations, GET_ID_
 
 // Integer $getId() { return id; }
 class JcGeneratedGetIdTransformer(
-    val classTable : TableInfo
+    val classTable : TableInfo.TableWithIdInfo
 ) : JcMethodExtFeature {
 
     override fun instList(method: JcMethod): JcMethodExtFeature.JcInstListResult? {
@@ -44,15 +44,15 @@ class JcGeneratedGetIdTransformer(
 
     private fun BlockGenerationContext.generateBody() {
 
-        val clazz = classTable.origClass!!
+        val clazz = classTable.origClass
         val cp = clazz.classpath
         val classType = clazz.typename.toJcType(cp)!!
-        val idType = classTable.idColumn!!.type.toJcType(cp)!!
+        val idType = classTable.idColumn.type.toJcType(cp)!!
 
         val lhv = nextLocalVar("%0", idType)
         val rhv = JcFieldRef(JcThis(classType), JcTypedFieldImpl(
             clazz.toType(),
-            classTable.idField!!,
+            classTable.idColumn.origField,
             JcSubstitutorImpl()
         ))
         addInstruction { loc -> JcAssignInst(loc, lhv, rhv) }
