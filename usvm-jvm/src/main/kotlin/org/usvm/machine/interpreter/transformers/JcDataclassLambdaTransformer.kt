@@ -87,7 +87,7 @@ class JcDataclassLambdaTransformer (
         it.isStatic && it.name == "valueOf" && it.parameters.first().type.typeName == "boolean"
     }
 
-    override fun instList(method: JcMethod): JcMethodExtFeature.JcInstListResult? {
+    override fun instList(method : JcMethod) : JcMethodExtFeature.JcInstListResult? {
 
         val template = JcReturnInst(JcInstLocationImpl(method, 0, 0), null)
         val transformer = JcSingleInstructionTransformer(JcInstListImpl(listOf(template)))
@@ -112,14 +112,14 @@ class JcDataclassLambdaTransformer (
     }
 
     // Boolean filter(Subcl s) { return s.$getId() == oneToMany_id; }
-    private fun BlockGenerationContext.generateSubFilter(method: JcMethod) {
+    private fun BlockGenerationContext.generateSubFilter(method : JcMethod) {
 
         val idVar = nextLocalVar("subId", subIdType)
         val idCall = JcVirtualCallExpr(subGetIdRef, method.parameters.first().toArgument, listOf())
         addInstruction { loc -> JcAssignInst(loc, idVar, idCall) }
 
         val relVar = nextLocalVar("relVal", subIdType)
-        val relField = JcDataclassTransformer.relatedField(clazz, rel)!!
+        val relField = JcDataclassTransformer.relatedField(clazz, rel.origField)!!
         val relVal = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), relField, JcSubstitutorImpl()))
         addInstruction { loc -> JcAssignInst(loc, relVar, relVal) }
 
@@ -148,7 +148,7 @@ class JcDataclassLambdaTransformer (
     }
 
     // Boolean betweenFilter(Object[] row) { return row[0] == id; }
-    private fun BlockGenerationContext.generateBtwFilter(method: JcMethod) {
+    private fun BlockGenerationContext.generateBtwFilter(method : JcMethod) {
 
         val rowId = nextLocalVar("idRow", cp.objectType)
         val ix = btwTable!!.indexOfField(idField)
@@ -184,7 +184,7 @@ class JcDataclassLambdaTransformer (
     }
 
     // Integer betweenSelector(Object[] row) { return (Integer) row[1]; }
-    private fun BlockGenerationContext.generateBtwSelect(method: JcMethod) {
+    private fun BlockGenerationContext.generateBtwSelect(method : JcMethod) {
 
         val rowSel = nextLocalVar("rowSel", cp.objectType)
         val ix = btwTable!!.indexOfField(subTable.idColumn.origField)
@@ -199,9 +199,9 @@ class JcDataclassLambdaTransformer (
     }
 
     // Boolean setFilter(Subcl s) { return mtmSet.contains(s.$getId()); }
-    private fun BlockGenerationContext.generateSetFilter(method: JcMethod) {
+    private fun BlockGenerationContext.generateSetFilter(method : JcMethod) {
 
-        val setField = JcDataclassTransformer.relatedField(clazz, rel)!!
+        val setField = JcDataclassTransformer.relatedField(clazz, rel.origField)!!
         val setVal = nextLocalVar("setVal", setField.type.toJcType(cp)!!)
         val set = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), setField, JcSubstitutorImpl()))
         addInstruction { loc -> JcAssignInst(loc, setVal, set) }
