@@ -1,21 +1,22 @@
-package org.usvm.machine.interpreter
+package org.usvm.machine.interpreter.transformers.SpringJPA
 
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcMethodExtFeature
-import org.jacodb.api.jvm.JcParameter
 import org.jacodb.api.jvm.JcTypedMethod
-import org.jacodb.api.jvm.cfg.JcArgument
 import org.jacodb.api.jvm.cfg.JcArrayAccess
 import org.jacodb.api.jvm.cfg.JcAssignInst
+import org.jacodb.api.jvm.cfg.JcBool
 import org.jacodb.api.jvm.cfg.JcCastExpr
+import org.jacodb.api.jvm.cfg.JcConditionExpr
+import org.jacodb.api.jvm.cfg.JcEqExpr
 import org.jacodb.api.jvm.cfg.JcFieldRef
 import org.jacodb.api.jvm.cfg.JcGotoInst
 import org.jacodb.api.jvm.cfg.JcIfInst
 import org.jacodb.api.jvm.cfg.JcInstRef
 import org.jacodb.api.jvm.cfg.JcInt
-import org.jacodb.api.jvm.cfg.JcNeqExpr
+import org.jacodb.api.jvm.cfg.JcLocalVar
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.jacodb.api.jvm.cfg.JcStaticCallExpr
 import org.jacodb.api.jvm.cfg.JcThis
@@ -31,19 +32,11 @@ import org.jacodb.impl.types.JcTypedFieldImpl
 import org.jacodb.impl.types.substition.JcSubstitutorImpl
 import org.usvm.instrumentation.util.toJcType
 import org.usvm.instrumentation.util.typename
-import org.usvm.machine.interpreter.transformers.FILTER_ANNOT
-import org.usvm.machine.interpreter.transformers.FILTER_BTW_ANNOT
-import org.usvm.machine.interpreter.transformers.FILTER_SET_ANNOT
-import org.usvm.machine.interpreter.transformers.JcDataclassTransformer
-import org.usvm.machine.interpreter.transformers.JcMethodBodyFiller
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
-import org.usvm.machine.interpreter.transformers.SELECT_BTW_ANNOT
 import org.usvm.util.Relation
 import org.usvm.util.TableInfo
 import org.usvm.util.contains
-
-private val JcParameter.toArgument : JcArgument
-    get() = JcArgument(index, name!!, type.toJcType(method.enclosingClass.classpath)!!)
+import org.usvm.util.toArgument
 
 val JcMethod.generatedSubFilter : Boolean get() = contains(this.annotations, FILTER_ANNOT)
 val JcMethod.generatedBtwFilter : Boolean get() = contains(this.annotations, FILTER_BTW_ANNOT)
@@ -57,8 +50,11 @@ val JcTypedMethod.staticMethodRef : TypedStaticMethodRefImpl get() = TypedStatic
     method.returnType
 )
 
-private const val JAVA_BOOL = "java.lang.Boolean"
-private const val JAVA_SET = "java.util.Set"
+const val JAVA_BOOL = "java.lang.Boolean"
+const val JAVA_SET = "java.util.Set"
+const val JAVA_STRING = "java.lang.String"
+const val JAVA_BIG_INT = "java.math.BigInteger"
+const val JAVA_BIG_DECIMAL = "java.math.BigDecimal"
 
 class JcDataclassLambdaTransformer (
     val cp : JcClasspath,
@@ -113,27 +109,9 @@ class JcDataclassLambdaTransformer (
         val relVal = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), relField, JcSubstitutorImpl()))
         addInstruction { loc -> JcAssignInst(loc, relVar, relVal) }
 
-        val endOfIf : JcInstRef
-        addInstruction { loc ->
-
-            val cond = JcNeqExpr(subIdType, idVar, relVar)
-            val trueBranch = JcInstRef(loc.index + 3)
-            val nextInst = JcInstRef(loc.index + 1)
-            endOfIf = JcInstRef(loc.index + 5)
-            JcIfInst(loc, cond, trueBranch, nextInst)
-        }
-
-        val ifResVal = nextLocalVar("ifres", cp.int)
-
-        addInstruction { loc -> JcAssignInst(loc, ifResVal, JcInt(1, cp.int)) }
-        addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-        addInstruction { loc -> JcAssignInst(loc, ifResVal, JcInt(0, cp.int)) }
-        addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-
-        val res = nextLocalVar("res", cp.boolean)
-        val cast = JcStaticCallExpr(castToBool.staticMethodRef, listOf(ifResVal))
-
-        addInstruction { loc -> JcAssignInst(loc, res, cast) }
+        val cond = JcEqExpr(subIdType, idVar, relVar)
+        val ifRes = compare(cp, cond, "res")
+        val res = toBoolean(cp, ifRes)
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
 
@@ -149,27 +127,9 @@ class JcDataclassLambdaTransformer (
         val idVal = JcFieldRef(thisVal, JcTypedFieldImpl(clazz.toType(), idField, JcSubstitutorImpl()))
         addInstruction { loc -> JcAssignInst(loc, idVar, idVal) }
 
-        val endOfIf : JcInstRef
-        addInstruction { loc ->
-
-            val cond = JcNeqExpr(idType, rowId, idVar)
-            val trueBranch = JcInstRef(loc.index + 3)
-            val nextInst = JcInstRef(loc.index + 1)
-            endOfIf = JcInstRef(loc.index + 5)
-            JcIfInst(loc, cond, trueBranch, nextInst)
-        }
-
-        val ifResVal = nextLocalVar("ifres", cp.int)
-
-        addInstruction { loc -> JcAssignInst(loc, ifResVal, JcInt(1, cp.int)) }
-        addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-        addInstruction { loc -> JcAssignInst(loc, ifResVal, JcInt(0, cp.int)) }
-        addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-
-        val res = nextLocalVar("res", cp.boolean)
-        val cast = JcStaticCallExpr(castToBool.staticMethodRef, listOf(ifResVal))
-
-        addInstruction { loc -> JcAssignInst(loc, res, cast) }
+        val cond = JcEqExpr(idType, rowId, idVar)
+        val ifRes = compare(cp, cond, "res")
+        val res = toBoolean(cp, ifRes)
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
 
@@ -214,4 +174,34 @@ class JcDataclassLambdaTransformer (
         addInstruction { loc -> JcAssignInst(loc, res, cast) }
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
+}
+
+fun BlockGenerationContext.compare(cp : JcClasspath, cond : JcConditionExpr, name : String) : JcLocalVar {
+
+    val endOfIf : JcInstRef
+    addInstruction { loc ->
+        val nextInst = JcInstRef(loc.index + 1)
+        val elseBranch = JcInstRef(loc.index + 3)
+        endOfIf = JcInstRef(loc.index + 5)
+        JcIfInst(loc, cond, nextInst, elseBranch)
+    }
+
+    val ifResVal = nextLocalVar("if$name", cp.boolean)
+    addInstruction { loc -> JcAssignInst(loc, ifResVal, JcBool(true, cp.boolean)) }
+    addInstruction { loc -> JcGotoInst(loc, endOfIf) }
+    addInstruction { loc -> JcAssignInst(loc, ifResVal, JcBool(false, cp.boolean)) }
+    addInstruction { loc -> JcGotoInst(loc, endOfIf) }
+
+    return ifResVal
+}
+
+fun BlockGenerationContext.toBoolean(cp : JcClasspath, value : JcLocalVar) : JcLocalVar {
+    val boolType = cp.findType(JAVA_BOOL) as JcClassType
+    val castToBool = boolType.declaredMethods.single {
+        it.isStatic && it.name == "valueOf" && it.parameters.first().type.typeName == "boolean"
+    }
+    val res = nextLocalVar("toBool${value.name}", cp.findType(JAVA_BOOL))
+    val cast = JcStaticCallExpr(castToBool.staticMethodRef, listOf(value))
+    addInstruction { loc -> JcAssignInst(loc, res, cast) }
+    return res
 }

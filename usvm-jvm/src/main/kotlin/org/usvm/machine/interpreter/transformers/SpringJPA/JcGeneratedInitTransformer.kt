@@ -1,10 +1,9 @@
-package org.usvm.machine.interpreter.transformers
+package org.usvm.machine.interpreter.transformers.SpringJPA
 
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcMethodExtFeature
-import org.jacodb.api.jvm.JcParameter
 import org.jacodb.api.jvm.JcType
 import org.jacodb.api.jvm.JcTypedMethod
 import org.jacodb.api.jvm.cfg.BsmHandleTag
@@ -23,28 +22,24 @@ import org.jacodb.api.jvm.cfg.JcNewExpr
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.jacodb.api.jvm.cfg.JcSpecialCallExpr
 import org.jacodb.api.jvm.cfg.JcThis
+import org.jacodb.api.jvm.cfg.JcValue
 import org.jacodb.api.jvm.cfg.JcVirtualCallExpr
 import org.jacodb.api.jvm.ext.findType
 import org.jacodb.api.jvm.ext.int
 import org.jacodb.api.jvm.ext.objectType
 import org.jacodb.api.jvm.ext.toType
-import org.jacodb.impl.cfg.JcInstListImpl
-import org.jacodb.impl.cfg.JcInstLocationImpl
 import org.jacodb.impl.cfg.TypedMethodRefImpl
 import org.jacodb.impl.cfg.VirtualMethodRefImpl
-import org.jacodb.impl.features.classpaths.AbstractJcInstResult
 import org.jacodb.impl.types.JcTypedFieldImpl
 import org.jacodb.impl.types.JcTypedMethodImpl
 import org.jacodb.impl.types.substition.JcSubstitutorImpl
 import org.usvm.instrumentation.util.getTypename
 import org.usvm.instrumentation.util.toJcType
-import org.usvm.machine.interpreter.generatedBtwFilter
-import org.usvm.machine.interpreter.generatedBtwSelect
-import org.usvm.machine.interpreter.generatedSetFilter
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
 import org.usvm.util.Relation
 import org.usvm.util.TableInfo
 import org.usvm.util.contains
+import org.usvm.util.toArgument
 import org.usvm.util.typedField
 
 val JcMethod.generatedInit : Boolean get() = contains(this.annotations, INIT_ANNOT)
@@ -56,19 +51,80 @@ val JcTypedMethod.methodRef : TypedMethodRefImpl
     method.returnType
 )
 
+const val DATABASES = "SpringDatabases"
+const val ITABLE = "generated.org.springframework.boot.databases.ITable"
+const val SET_WRAPPER = "generated.org.springframework.boot.databases.SetWrapper"
+const val LIST_WRAPPER = "generated.org.springframework.boot.databases.ListWrapper"
+const val MAP_TABLE = "generated.org.springframework.boot.databases.MappedTable"
+const val FILTER_TABLE = "generated.org.springframework.boot.databases.FiltredTable"
+const val SORTED_TABLE = "generated.org.springframework.boot.databases.SortedTable"
+const val JOIN_TABLE = "generated.org.springframework.boot.databases.JoinedTable"
+const val DISTINCT_TABLE = "generated.org.springframework.boot.databases.DistinctTable"
 
-private val JcParameter.toArgument : JcArgument
-    get() = JcArgument(index, name!!, type.toJcType(method.enclosingClass.classpath)!!)
+const val PREDICATE = "java.util.function.Predicate"
+const val FUNCTION = "java.util.function.Function"
 
-private const val DATABASES = "SpringDatabases"
-private const val ITABLE = "generated.org.springframework.boot.databases.ITable"
-private const val SET_WRAPPER = "generated.org.springframework.boot.databases.SetWrapper"
-private const val LIST_WRAPPER = "generated.org.springframework.boot.databases.ListWrapper"
-private const val MAP_TABLE = "generated.org.springframework.boot.databases.MappedTable"
-private const val FILTER_TABLE = "generated.org.springframework.boot.databases.FiltredTable"
+fun BlockGenerationContext.generateNew(name : String, type : JcType) : JcLocalVar {
+    val vari = nextLocalVar(name, type)
+    val newExpr = JcNewExpr(type)
+    addInstruction { loc -> JcAssignInst(loc, vari, newExpr) }
+    return vari
+}
 
-private const val PREDICATE = "java.util.function.Predicate"
-private const val FUNCTION = "java.util.function.Function"
+fun BlockGenerationContext.generateNewWithInit(name : String, type : JcClassType, args : List<JcValue>) : JcLocalVar {
+    val vari = generateNew(name, type)
+    val init = type.declaredMethods.single { it.name == "<init>" && it.parameters.size == args.size }
+    val call = JcSpecialCallExpr(init.methodRef, vari, args)
+    addInstruction { loc -> JcCallInst(loc, call) }
+    return vari
+}
+
+fun BlockGenerationContext.generateLambda(cp : JcClasspath, name : String, method : JcMethod) : JcLocalVar {
+    val (callSiteName, callSiteRetType) = if (method.returnType.typeName == "java.lang.Boolean") {
+        Pair("test", cp.findType(PREDICATE))
+    }
+    else { Pair("apply", cp.findType(FUNCTION))}
+
+    val lambdaVar = nextLocalVar(name, callSiteRetType)
+    val lambda = getLambda(cp, method, callSiteName, callSiteRetType)
+    addInstruction { loc -> JcAssignInst(loc, lambdaVar, lambda) }
+
+    return lambdaVar
+}
+
+fun BlockGenerationContext.generateLambda(name : String, method : JcMethod) : JcLocalVar {
+    val cp = method.enclosingClass.classpath
+    return generateLambda(cp, name, method)
+}
+
+fun getLambda(cp : JcClasspath, method : JcMethod, callSiteName : String, callSiteRetType : JcType) : JcLambdaExpr {
+
+    val bsm = cp.findType("java.lang.invoke.LambdaMetafactory").let { it as JcClassType }
+        .declaredMethods.single { it.name == "metafactory" }
+        .methodRef
+
+    val classType = method.enclosingClass.toType()
+    val argTypes = method.parameters.map { it.type }
+    val actualMethod = TypedMethodRefImpl(classType, method.name, argTypes, method.returnType)
+
+    val interfaceMethodType = BsmMethodTypeArg(argTypes, method.returnType)
+    val dynamicMethodType = BsmMethodTypeArg(argTypes.map { cp.objectType.getTypename() }, method.returnType)
+
+    val callSiteArgTypes = listOf(classType as JcType)
+    val callSiteArgs = listOf(JcThis(classType))
+
+    return JcLambdaExpr(
+        bsm,
+        actualMethod,
+        interfaceMethodType,
+        dynamicMethodType,
+        callSiteName,
+        callSiteArgTypes,
+        callSiteRetType,
+        callSiteArgs,
+        BsmHandleTag.MethodHandle.INVOKE_VIRTUAL
+    )
+}
 
 class JcGeneratedInitTransformer(
     val cp : JcClasspath,
@@ -86,13 +142,9 @@ class JcGeneratedInitTransformer(
     val listType = cp.findType(LIST_WRAPPER) as JcClassType
     val mapType = cp.findType(MAP_TABLE) as JcClassType
     val filterType = cp.findType(FILTER_TABLE) as JcClassType
-    val predicateType = cp.findType(PREDICATE)
-    val functionType = cp.findType(FUNCTION)
 
-    val filterInit = filterType.declaredMethods.single { it.name == "<init>" && it.parameters.size == 2 }
-    val mapInit = mapType.declaredMethods.single { it.name == "<init>" && it.parameters.size == 3 }
-    val listInit = listType.declaredMethods.single { it.name == "<init>" && it.parameters.size == 1 }
-    val setInit = setType.declaredMethods.single { it.name == "<init>" && it.parameters.size == 1 }
+    val functionType = cp.findType(FUNCTION)
+    val predicateType = cp.findType(PREDICATE)
 
     override fun instList(method : JcMethod) : JcMethodExtFeature.JcInstListResult? {
 
@@ -147,14 +199,10 @@ class JcGeneratedInitTransformer(
 
         val fieldName = rel.origField.name
 
-        val filterVar = generateNew("${fieldName}Single", filterType)
-        val lambdaVar = nextLocalVar("${fieldName}Lambda", cp.findType("java.util.function.Predicate"))
         val method = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.first()
-        val lambda = getLambda(method)
-        addInstruction { loc -> JcAssignInst(loc, lambdaVar, lambda) }
+        val lambdaVar = generateLambda("${fieldName}Lambda", method)
 
-        val filterCall = JcSpecialCallExpr(filterInit.methodRef, filterVar, listOf(arg, lambdaVar))
-        addInstruction { loc -> JcCallInst(loc, filterCall) }
+        val filterVar = generateNewWithInit("${fieldName}Single", filterType, listOf(arg, lambdaVar))
 
         val fstVal = nextLocalVar("${fieldName}Fst", cp.objectType)
         val fstMethod = VirtualMethodRefImpl.of(
@@ -178,14 +226,10 @@ class JcGeneratedInitTransformer(
 
         val fieldName = rel.origField.name
 
-        val lambdaVar = nextLocalVar("${fieldName}Lambda", predicateType)
         val method = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.first()
-        val lambda = getLambda(method)
-        addInstruction { loc -> JcAssignInst(loc, lambdaVar, lambda) }
+        val lambdaVar = generateLambda("${fieldName}Lambda", method)
 
-        val filterVar = generateNew("${fieldName}Filter", filterType)
-        val filterCall = JcSpecialCallExpr(filterInit.methodRef, filterVar, listOf(arg, lambdaVar))
-        addInstruction { loc -> JcCallInst(loc, filterCall) }
+        val filterVar = generateNewWithInit("${fieldName}Filter", filterType, listOf(arg, lambdaVar))
 
         val wrapperVar = generateWrapper(rel, filterVar)
         val fieldRef = JcFieldRef(thisVal, rel.origField.typedField)
@@ -196,13 +240,10 @@ class JcGeneratedInitTransformer(
 
         val fieldName = rel.origField.name
 
-        val filterVar = generateNew("${fieldName}FilWrapper", filterType)
-        val predVar = nextLocalVar("${fieldName}Pred", predicateType)
         val pred = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.single { it.generatedSetFilter }
-        addInstruction { loc -> JcAssignInst(loc, predVar, getLambda(pred)) }
+        val predVar = generateLambda("${fieldName}Pred", pred)
 
-        val filterCall = JcSpecialCallExpr(filterInit.methodRef, filterVar, listOf(arg, predVar))
-        addInstruction { loc -> JcCallInst(loc, filterCall) }
+        val filterVar = generateNewWithInit("${fieldName}FilWrapper", filterType, listOf(arg, predVar))
 
         val wrapperVar = generateWrapper(rel, filterVar)
         val fieldRef = JcFieldRef(thisVal, rel.origField.typedField)
@@ -213,49 +254,32 @@ class JcGeneratedInitTransformer(
 
         val fieldName = rel.origField.name
 
-        val setVar = generateNew("${fieldName}Set", setType)
-        val mapVar = generateNew("${fieldName}Map", mapType)
-        val filterVar = generateNew("${fieldName}Filter", filterType)
-
         val btwVar = nextLocalVar("${fieldName}Btw", itableType)
         val btwTable = cp.findType(DATABASES).let { it as JcClassType }.declaredFields
             .single { it.name == rel.joinTable.name }
         val btw = JcFieldRef(null, btwTable)
         addInstruction { loc -> JcAssignInst(loc, btwVar, btw) }
 
-        val predVar = nextLocalVar("${fieldName}Lambda", predicateType)
         val pred = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.single { it.generatedBtwFilter }
-        addInstruction { loc -> JcAssignInst(loc, predVar, getLambda(pred)) }
+        val predVar = generateLambda("${fieldName}Lambda", pred)
 
-        val filterCall = JcSpecialCallExpr(filterInit.methodRef, filterVar, listOf(btwVar, predVar))
-        addInstruction { loc -> JcCallInst(loc, filterCall) }
+        val filterVar = generateNewWithInit("${fieldName}Filter", filterType, listOf(btwVar, predVar))
 
-        val selVar = nextLocalVar("${fieldName}Sel", functionType)
         val sel = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.single { it.generatedBtwSelect }
-        addInstruction { loc -> JcAssignInst(loc, selVar, getLambda(sel)) }
+        val selVar = generateLambda("${fieldName}Sel", sel)
 
         val cTyp = cp.findType("java.lang.Class")
         val typeVar = nextLocalVar("${fieldName}MapType", cTyp)
         val type = JcClassConstant(sel.returnType.toJcType(cp)!!, cTyp)
         addInstruction { loc -> JcAssignInst(loc, typeVar, type) }
 
-        val mapperCall = JcSpecialCallExpr(mapInit.methodRef, mapVar, listOf(filterVar, selVar, typeVar))
-        addInstruction { loc -> JcCallInst(loc, mapperCall) }
+        val mapVar = generateNewWithInit("${fieldName}Map", mapType, listOf(filterVar, selVar, typeVar))
 
-        val setCall = JcSpecialCallExpr(setInit.methodRef, setVar, listOf(mapVar))
-        addInstruction { loc -> JcCallInst(loc, setCall) }
+        val setVar = generateNewWithInit("${fieldName}Set", setType, listOf(mapVar))
 
         val relField = JcDataclassTransformer.relatedField(clazz, rel.origField)!!
         val fieldRef = JcFieldRef(thisVal, relField.typedField)
-        addInstruction { loc -> JcAssignInst(loc, fieldRef, selVar) }
-    }
-
-
-    private fun BlockGenerationContext.generateNew(name : String, type : JcType) : JcLocalVar {
-        val vari = nextLocalVar(name, type)
-        val newExpr = JcNewExpr(type)
-        addInstruction { loc -> JcAssignInst(loc, vari, newExpr) }
-        return vari
+        addInstruction { loc -> JcAssignInst(loc, fieldRef, setVar) }
     }
 
     private fun BlockGenerationContext.generateWrapper(rel : Relation, tblVar : JcLocalVar) : JcLocalVar {
@@ -263,49 +287,17 @@ class JcGeneratedInitTransformer(
         val relType = rel.origField.type
         val fieldName = rel.origField.name
 
-        val (type, method) = when (relType.typeName) {
-            "java.util.Set" -> Pair(setType, setInit)
-            "java.util.List" -> Pair(listType, listInit)
+        val type = when (relType.typeName) {
+            "java.util.Set" -> setType
+            "java.util.List" -> listType
             // TODO: more collections
             else -> {
                 assert(false)
-                Pair(setType, setInit)
+                setType
             }
         }
 
-        val vari = generateNew("${fieldName}Wrapper", type)
-        val call = JcSpecialCallExpr(method.methodRef, vari, listOf(tblVar))
-        addInstruction { loc -> JcCallInst(loc, call) }
+        val vari = generateNewWithInit("${fieldName}Wrapper", type, listOf(tblVar))
         return vari
-    }
-
-    private fun getLambda(method : JcMethod) : JcLambdaExpr {
-
-        val bsm = cp.findType("java.lang.invoke.LambdaMetafactory").let { it as JcClassType }
-            .declaredMethods.single { it.name == "metafactory" }
-            .methodRef
-
-        val argTypes = method.parameters.map { it.type }
-        val actualMethod = TypedMethodRefImpl(classType, method.name, argTypes, method.returnType)
-
-        val interfaceMethodType = BsmMethodTypeArg(argTypes, method.returnType)
-        val dynamicMethodType = BsmMethodTypeArg(argTypes.map { cp.objectType.getTypename() }, method.returnType)
-
-        val callSiteName = "test"
-        val callSiteArgTypes = listOf(classType as JcType)
-        val callSiteRetType = predicateType
-        val callSiteArgs = listOf(thisVal)
-
-        return JcLambdaExpr(
-            bsm,
-            actualMethod,
-            interfaceMethodType,
-            dynamicMethodType,
-            callSiteName,
-            callSiteArgTypes,
-            callSiteRetType,
-            callSiteArgs,
-            BsmHandleTag.MethodHandle.INVOKE_VIRTUAL
-            )
     }
 }

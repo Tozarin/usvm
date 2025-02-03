@@ -1,12 +1,12 @@
-package org.usvm.machine.interpreter.transformers
+package org.usvm.machine.interpreter.transformers.SpringJPA
 
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcMethodExtFeature
-import org.jacodb.api.jvm.cfg.JcInst
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.jacodb.impl.cfg.JcInstListImpl
 import org.jacodb.impl.cfg.JcInstLocationImpl
 import org.jacodb.impl.features.classpaths.AbstractJcInstResult
+import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
 
 class JcMethodBodyFiller(

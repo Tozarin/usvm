@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers
+package org.usvm.machine.interpreter.transformers.SpringJPA
 
 import kotlinx.collections.immutable.toPersistentList
 import org.jacodb.api.jvm.JcClassExtFeature
@@ -13,7 +13,7 @@ import org.jacodb.impl.bytecode.JcMethodImpl
 import org.jacodb.impl.cfg.util.internalDesc
 import org.jacodb.impl.features.JcFeaturesChain
 import org.jacodb.impl.types.*
-import org.usvm.machine.interpreter.JcDataclassLambdaTransformer
+import org.objectweb.asm.Opcodes
 import org.usvm.util.JcTableInfoCollector
 import org.usvm.util.Relation
 import org.usvm.util.TableInfo
@@ -30,6 +30,30 @@ const val FILTER_ANNOT = "\$generatedFilter"
 const val FILTER_BTW_ANNOT = "\$generatedBtwFilter"
 const val SELECT_BTW_ANNOT = "\$generatedBtwSelector"
 const val FILTER_SET_ANNOT = "\$generatedSetFilter"
+const val SERIALIZER_ANNOT = "\$generatedSerializer"
+const val IDENTITY_ANNOT = "\$generatedIdent"
+
+// cp.findClass("generated.org.springframework.boot.databases.FirstDataClass")
+//"org.springframework.samples.petclinic.vet.Vet"
+
+object TestTransformer : JcClassExtFeature {
+
+    var b : Int = 0
+    override fun methodsOf(clazz: JcClassOrInterface): List<JcMethod>? {
+
+        if (clazz.classpath.findClass("SpringDatabases").declaredFields.size == 0 || b == 1) return null
+
+        b++;
+        val cp = clazz.classpath
+        val foo = cp.findClass("org.springframework.samples.petclinic.owner.OwnerRepository")
+        val bar = foo.declaredMethods.find { it.name == "findPetTypes" }!!
+        //val bar = foo.declaredMethods.find { it.name == "findById" }!!
+
+        println(bar.instList)
+
+        return null
+    }
+}
 
 object JcDataclassTransformer : JcClassExtFeature {
 
@@ -39,6 +63,17 @@ object JcDataclassTransformer : JcClassExtFeature {
     private val relationFields : HashMap<String, JcField> = hashMapOf()
 
     private val relationMethods : HashMap<String, List<JcMethod>> = hashMapOf()
+
+    private var collector : JcTableInfoCollector? = null
+
+    fun getCollector() : JcTableInfoCollector {
+        return collector!!
+    }
+
+    fun initCollector(cp : JcClasspath) : JcTableInfoCollector {
+        if (collector == null) collector = JcTableInfoCollector(cp)
+        return getCollector()
+    }
 
     fun relatedField(clazz : JcClassOrInterface, field : JcField) : JcField? {
         return relationFields[combName(clazz, field)]
@@ -65,7 +100,7 @@ object JcDataclassTransformer : JcClassExtFeature {
         askedClasses[clazz.name] = fields
 
         val cp = clazz.classpath
-        val collector = JcTableInfoCollector(cp)
+        val collector = initCollector(cp)
         val classTable = collector.collectTable(clazz)
 
         classTable.relations.filterIsInstance<Relation.RelationByTable>().forEach { rel ->
@@ -74,7 +109,7 @@ object JcDataclassTransformer : JcClassExtFeature {
             val fieldInfo = FieldInfo(
                 getSetFieldName(rel),
                 "Ljava/util/Set<${subIdType.jvmName()}>;",
-                2,
+                Opcodes.ACC_PUBLIC,
                 "Ljava.util.Set;",
                 listOf()
             )
@@ -89,7 +124,7 @@ object JcDataclassTransformer : JcClassExtFeature {
             val fieldInfo = FieldInfo(
                 "\$${col.origField.name}IdCheck",
                 null,
-                2,
+                Opcodes.ACC_PUBLIC,
                 "L${subIdType};",
                 listOf()
             )
@@ -106,15 +141,16 @@ object JcDataclassTransformer : JcClassExtFeature {
         if (!clazz.isDataClass) return null
 
         val cp = clazz.classpath
-        val collector = JcTableInfoCollector(cp)
+        val collector = initCollector(cp)
         val classTable = collector.collectTable(clazz)
         val gen = SignatureGenerator(cp, collector, classTable, originalMethods)
 
         val blancInit = gen.getConstructor()
         val getId = gen.getId()
+        val serializer = gen.getSerializer()
         val lambdas = gen.getLambdas()
 
-        return originalMethods + blancInit + getId + lambdas
+        return originalMethods + blancInit + getId + serializer + lambdas
     }
 }
 
@@ -149,7 +185,7 @@ private class SignatureGenerator(
             val newParam = ParameterInfo(
                 "generated.org.springframework.boot.databases.ITable",
                 ix + 1,
-                1,
+                Opcodes.ACC_PUBLIC,
                 "${rel}Condition",
                 listOf()
             )
@@ -161,7 +197,7 @@ private class SignatureGenerator(
             "<init>",
             desc,
             signature,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(INIT_ANNOT)),
             listOf(),
             parametrs
@@ -174,21 +210,33 @@ private class SignatureGenerator(
     fun getId() : JcMethod {
 
         val newFeatures = pFeatures.add(0, JcGeneratedGetIdTransformer(classTable))
-
         val desc = "()L${classTable.idColumn.type.internalDesc};"
-
         val methodInfo = MethodInfo(
             "\$getId",
             desc,
             null,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(GET_ID_ANNOT)),
             listOf(),
             listOf()
         )
-        val getId = JcMethodImpl(methodInfo, JcFeaturesChain(newFeatures), classTable.origClass)
+        return JcMethodImpl(methodInfo, JcFeaturesChain(newFeatures), classTable.origClass)
+    }
 
-        return getId
+    fun getSerializer() : JcMethod {
+
+        val newFeatures = pFeatures.add(0, JcGeneratedSerializerTransformer(classTable))
+        val desc = "()[Ljava/lang/Object;"
+        val methodInfo = MethodInfo(
+            "\$serialize",
+            desc,
+            null,
+            Opcodes.ACC_PUBLIC,
+            listOf(blancAnnotation(SERIALIZER_ANNOT)),
+            listOf(),
+            listOf()
+        )
+        return JcMethodImpl(methodInfo, JcFeaturesChain(newFeatures), classTable.origClass)
     }
 
     fun getLambdas() : List<JcMethod> {
@@ -236,7 +284,7 @@ private class SubSignatureGenerator(
             "\$${rel.origField.name}filter",
             desc,
             null,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(FILTER_ANNOT)),
             listOf(),
             listOf(ParameterInfo(rel.origField.type.typeName, 0, 1, "subc", listOf()))
@@ -251,7 +299,7 @@ private class SubSignatureGenerator(
             "\$${rel.origField.name}BetweenFilter",
             desc,
             null,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(FILTER_BTW_ANNOT)),
             listOf(),
             listOf(ParameterInfo("java.lang.Object[]", 0, 1, "row", listOf()))
@@ -265,7 +313,7 @@ private class SubSignatureGenerator(
             "\$${rel.origField.name}BetweenSelector",
             desc,
             null,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(SELECT_BTW_ANNOT)),
             listOf(),
             listOf(ParameterInfo("java.lang.Object[]", 0, 1, "row", listOf()))
@@ -280,7 +328,7 @@ private class SubSignatureGenerator(
             "\$${rel.origField.name}SetFilter",
             desc,
             null,
-            1,
+            Opcodes.ACC_PUBLIC,
             listOf(blancAnnotation(FILTER_SET_ANNOT)),
             listOf(),
             listOf(ParameterInfo(rel.origField.type.typeName, 0, 1, "subc", listOf()))
