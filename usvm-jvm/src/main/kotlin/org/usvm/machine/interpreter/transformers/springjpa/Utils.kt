@@ -1,13 +1,15 @@
-package org.usvm.machine.interpreter.transformers.springJPA
+package org.usvm.machine.interpreter.transformers.springjpa
 
 import org.jacodb.api.jvm.JcClassOrInterface
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
 import org.jacodb.api.jvm.JcMethod
+import org.jacodb.api.jvm.JcParameter
 import org.jacodb.api.jvm.JcType
 import org.jacodb.api.jvm.JcTypedMethod
 import org.jacodb.api.jvm.cfg.BsmHandleTag
 import org.jacodb.api.jvm.cfg.BsmMethodTypeArg
+import org.jacodb.api.jvm.cfg.JcArgument
 import org.jacodb.api.jvm.cfg.JcAssignInst
 import org.jacodb.api.jvm.cfg.JcBool
 import org.jacodb.api.jvm.cfg.JcCallInst
@@ -29,8 +31,8 @@ import org.jacodb.api.jvm.ext.toType
 import org.jacodb.impl.cfg.TypedMethodRefImpl
 import org.jacodb.impl.cfg.TypedStaticMethodRefImpl
 import org.usvm.instrumentation.util.getTypename
+import org.usvm.instrumentation.util.toJcType
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
-import org.usvm.util.Relation
 import org.usvm.util.contains
 import org.usvm.util.nameEquals
 
@@ -97,6 +99,9 @@ val JcTypedMethod.staticMethodRef: TypedStaticMethodRefImpl
 val JcMethod.query: String?
     get() =
         annotations.find { nameEquals(it, "Query") }?.values?.get("value") as String?
+
+val JcParameter.toArgument: JcArgument
+    get() = JcArgument(index, name!!, type.toJcType(method.enclosingClass.classpath)!!)
 
 
 fun BlockGenerationContext.compare(cp: JcClasspath, cond: JcConditionExpr, name: String): JcLocalVar {

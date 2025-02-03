@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers.springJPA
+package org.usvm.machine.interpreter.transformers.springjpa
 
 import kotlinx.collections.immutable.persistentListOf
 import org.jacodb.api.jvm.JcClassExtFeature
@@ -16,6 +16,28 @@ import org.usvm.util.TableInfo
 import org.usvm.util.getSetFieldName
 import org.usvm.util.jvmDescriptor
 
+
+// cp.findClass("generated.org.springframework.boot.databases.FirstDataClass")
+//"org.springframework.samples.petclinic.vet.Vet"
+
+object TestTransformer : JcClassExtFeature {
+
+    var b: Int = 0
+    override fun methodsOf(clazz: JcClassOrInterface): List<JcMethod>? {
+
+        if (clazz.classpath.findClass("SpringDatabases").declaredFields.size == 0 || b == 1) return null
+
+        b++;
+        val cp = clazz.classpath
+        val foo = cp.findClass("org.springframework.samples.petclinic.owner.OwnerRepository")
+        val bar = foo.declaredMethods.find { it.name == "findPetTypes" }!!
+        //val bar = foo.declaredMethods.find { it.name == "findById" }!!
+
+        println(bar.instList)
+
+        return null
+    }
+}
 
 object JcDataclassTransformer : JcClassExtFeature {
 

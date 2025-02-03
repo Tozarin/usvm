@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers.springJPA
+package org.usvm.machine.interpreter.transformers.springjpa
 
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcMethodExtFeature

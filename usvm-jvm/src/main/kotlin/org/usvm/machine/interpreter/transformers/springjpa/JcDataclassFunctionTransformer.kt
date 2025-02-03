@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers.springJPA
+package org.usvm.machine.interpreter.transformers.springjpa
 
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
@@ -31,7 +31,6 @@ import org.usvm.instrumentation.util.typename
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
 import org.usvm.util.Relation
 import org.usvm.util.TableInfo
-import org.usvm.util.toArgument
 import org.usvm.util.typedField
 
 

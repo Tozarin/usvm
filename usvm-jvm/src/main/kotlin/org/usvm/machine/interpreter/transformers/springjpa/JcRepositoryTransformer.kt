@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers.springJPA
+package org.usvm.machine.interpreter.transformers.springjpa
 
 import kotlinx.collections.immutable.toPersistentList
 import org.antlr.v4.runtime.CharStreams
@@ -10,7 +10,7 @@ import org.jacodb.api.jvm.JcClassOrInterface
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer
-import org.usvm.machine.interpreter.transformers.springJPA.query.JPAQueryVisitor
+import org.usvm.machine.interpreter.transformers.springjpa.query.JPAQueryVisitor
 
 
 object JcRepositoryTransformer : JcClassExtFeature {
@@ -36,6 +36,8 @@ object JcRepositoryTransformer : JcClassExtFeature {
         val lambdas = originalMethods.flatMap {
             val query = it.query // TODO: by name
             if (query == null) {
+                listOf()
+            } else if (query != "SELECT ptype FROM PetType ptype ORDER BY ptype.name") {
                 listOf()
             } else {
                 val queryCtx = HqlLexer(CharStreams.fromString(query))
