@@ -1,22 +1,14 @@
-package org.usvm.machine.interpreter.transformers.SpringJPA
+package org.usvm.machine.interpreter.transformers.springJPA
 
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
 import org.jacodb.api.jvm.JcMethod
-import org.jacodb.api.jvm.JcMethodExtFeature
-import org.jacodb.api.jvm.JcTypedMethod
 import org.jacodb.api.jvm.cfg.JcArrayAccess
 import org.jacodb.api.jvm.cfg.JcAssignInst
-import org.jacodb.api.jvm.cfg.JcBool
 import org.jacodb.api.jvm.cfg.JcCastExpr
-import org.jacodb.api.jvm.cfg.JcConditionExpr
 import org.jacodb.api.jvm.cfg.JcEqExpr
 import org.jacodb.api.jvm.cfg.JcFieldRef
-import org.jacodb.api.jvm.cfg.JcGotoInst
-import org.jacodb.api.jvm.cfg.JcIfInst
-import org.jacodb.api.jvm.cfg.JcInstRef
 import org.jacodb.api.jvm.cfg.JcInt
-import org.jacodb.api.jvm.cfg.JcLocalVar
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.jacodb.api.jvm.cfg.JcStaticCallExpr
 import org.jacodb.api.jvm.cfg.JcThis
@@ -26,7 +18,6 @@ import org.jacodb.api.jvm.ext.findType
 import org.jacodb.api.jvm.ext.int
 import org.jacodb.api.jvm.ext.objectType
 import org.jacodb.api.jvm.ext.toType
-import org.jacodb.impl.cfg.TypedStaticMethodRefImpl
 import org.jacodb.impl.cfg.VirtualMethodRefImpl
 import org.jacodb.impl.types.JcTypedFieldImpl
 import org.jacodb.impl.types.substition.JcSubstitutorImpl
@@ -35,35 +26,15 @@ import org.usvm.instrumentation.util.typename
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
 import org.usvm.util.Relation
 import org.usvm.util.TableInfo
-import org.usvm.util.contains
 import org.usvm.util.toArgument
 
-val JcMethod.generatedSubFilter : Boolean get() = contains(this.annotations, FILTER_ANNOT)
-val JcMethod.generatedBtwFilter : Boolean get() = contains(this.annotations, FILTER_BTW_ANNOT)
-val JcMethod.generatedBtwSelect : Boolean get() = contains(this.annotations, SELECT_BTW_ANNOT)
-val JcMethod.generatedSetFilter : Boolean get() = contains(this.annotations, FILTER_SET_ANNOT)
-
-val JcTypedMethod.staticMethodRef : TypedStaticMethodRefImpl get() = TypedStaticMethodRefImpl(
-    enclosingType as JcClassType,
-    name,
-    method.parameters.map { it.type },
-    method.returnType
-)
-
-const val JAVA_BOOL = "java.lang.Boolean"
-const val JAVA_SET = "java.util.Set"
-const val JAVA_STRING = "java.lang.String"
-const val JAVA_BIG_INT = "java.math.BigInteger"
-const val JAVA_BIG_DECIMAL = "java.math.BigDecimal"
-
-class JcDataclassLambdaTransformer (
-    val cp : JcClasspath,
-    val classTable : TableInfo.TableWithIdInfo,
-    val subTable : TableInfo.TableWithIdInfo,
-    val btwTable : TableInfo?,
-    val rel : Relation
-) : JcMethodExtFeature {
-
+abstract class JcDataclassLambdaTransformer(
+    val cp: JcClasspath,
+    classTable: TableInfo.TableWithIdInfo,
+    val subTable: TableInfo.TableWithIdInfo,
+    val btwTable: TableInfo?,
+    val rel: Relation
+) : JcBodyFillerFeature() {
     val clazz = classTable.origClass
     val classType = clazz.typename.toJcType(cp)!!
     val thisVal = JcThis(classType)
@@ -75,31 +46,22 @@ class JcDataclassLambdaTransformer (
     val subType = subClass.toType()
     val subGetIdMethod = subType.declaredMethods.single { it.name == "\$getId" && it.parameters.isEmpty() }
     val subGetIdRef = VirtualMethodRefImpl.of(subType, subGetIdMethod)
+}
 
-    val castToBool = (cp.findType(JAVA_BOOL) as JcClassType).declaredMethods.single {
-        it.isStatic && it.name == "valueOf" && it.parameters.first().type.typeName == "boolean"
+// Boolean filter(Subcl s) { return s.$getId() == oneToMany_id; }
+class JcSubFilterTransformer(
+    cp: JcClasspath,
+    classTable: TableInfo.TableWithIdInfo,
+    subTable: TableInfo.TableWithIdInfo,
+    btwTable: TableInfo?,
+    rel: Relation
+) : JcDataclassLambdaTransformer(cp, classTable, subTable, btwTable, rel) {
+
+    override fun condition(method: JcMethod): Boolean {
+        return method.generatedBtwFilter
     }
 
-    override fun instList(method : JcMethod) : JcMethodExtFeature.JcInstListResult? {
-
-        val filler = JcMethodBodyFiller(method)
-
-        var performed = true
-        filler.generateReplacementBlock {
-            if (method.generatedSubFilter) generateSubFilter(method)
-            else if (method.generatedBtwFilter) generateBtwFilter(method)
-            else if (method.generatedBtwSelect) generateBtwSelect(method)
-            else if (method.generatedSetFilter) generateSetFilter(method)
-            else performed = false
-        }
-        if (!performed) return null
-
-        return  filler.buildBody()
-    }
-
-    // Boolean filter(Subcl s) { return s.$getId() == oneToMany_id; }
-    private fun BlockGenerationContext.generateSubFilter(method : JcMethod) {
-
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
         val idVar = nextLocalVar("subId", subIdType)
         val idCall = JcVirtualCallExpr(subGetIdRef, method.parameters.first().toArgument, listOf())
         addInstruction { loc -> JcAssignInst(loc, idVar, idCall) }
@@ -114,9 +76,22 @@ class JcDataclassLambdaTransformer (
         val res = toBoolean(cp, ifRes)
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
+}
 
-    // Boolean betweenFilter(Object[] row) { return row[0] == id; }
-    private fun BlockGenerationContext.generateBtwFilter(method : JcMethod) {
+// Boolean betweenFilter(Object[] row) { return row[0] == id; }
+class JcBtwFilterTransformer(
+    cp: JcClasspath,
+    classTable: TableInfo.TableWithIdInfo,
+    subTable: TableInfo.TableWithIdInfo,
+    btwTable: TableInfo?,
+    rel: Relation
+) : JcDataclassLambdaTransformer(cp, classTable, subTable, btwTable, rel) {
+
+    override fun condition(method: JcMethod): Boolean {
+        return method.generatedBtwFilter
+    }
+
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
 
         val rowId = nextLocalVar("idRow", cp.objectType)
         val ix = btwTable!!.indexOfField(idField)
@@ -132,9 +107,23 @@ class JcDataclassLambdaTransformer (
         val res = toBoolean(cp, ifRes)
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
+}
 
-    // Integer betweenSelector(Object[] row) { return (Integer) row[1]; }
-    private fun BlockGenerationContext.generateBtwSelect(method : JcMethod) {
+
+// Integer betweenSelector(Object[] row) { return (Integer) row[1]; }
+class JcBtwSelectTransformer(
+    cp: JcClasspath,
+    classTable: TableInfo.TableWithIdInfo,
+    subTable: TableInfo.TableWithIdInfo,
+    btwTable: TableInfo?,
+    rel: Relation
+) : JcDataclassLambdaTransformer(cp, classTable, subTable, btwTable, rel) {
+
+    override fun condition(method: JcMethod): Boolean {
+        return method.generatedBtwSelect
+    }
+
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
 
         val rowSel = nextLocalVar("rowSel", cp.objectType)
         val ix = btwTable!!.indexOfField(subTable.idColumn.origField)
@@ -147,9 +136,27 @@ class JcDataclassLambdaTransformer (
 
         addInstruction { loc -> JcReturnInst(loc, castVar) }
     }
+}
 
-    // Boolean setFilter(Subcl s) { return mtmSet.contains(s.$getId()); }
-    private fun BlockGenerationContext.generateSetFilter(method : JcMethod) {
+
+// Boolean setFilter(Subcl s) { return mtmSet.contains(s.$getId()); }
+class JcSetFilterTransformer(
+    cp: JcClasspath,
+    classTable: TableInfo.TableWithIdInfo,
+    subTable: TableInfo.TableWithIdInfo,
+    btwTable: TableInfo?,
+    rel: Relation
+) : JcDataclassLambdaTransformer(cp, classTable, subTable, btwTable, rel) {
+
+    val castToBool = (cp.findType(JAVA_BOOL) as JcClassType).declaredMethods.single {
+        it.isStatic && it.name == "valueOf" && it.parameters.first().type.typeName == "boolean"
+    }
+
+    override fun condition(method: JcMethod): Boolean {
+        return method.generatedSetFilter
+    }
+
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
 
         val setField = JcDataclassTransformer.relatedField(clazz, rel.origField)!!
         val setVal = nextLocalVar("setVal", setField.type.toJcType(cp)!!)
@@ -165,7 +172,7 @@ class JcDataclassLambdaTransformer (
         val contains = setType.declaredMethods.single {
             !it.isStatic && it.name == "contains" && it.parameters.size == 1
         }.let { VirtualMethodRefImpl.of(setType, it) }
-        val conCall = JcVirtualCallExpr(contains , setVal, listOf(argIdVal))
+        val conCall = JcVirtualCallExpr(contains, setVal, listOf(argIdVal))
         addInstruction { loc -> JcAssignInst(loc, conVal, conCall) }
 
         val res = nextLocalVar("res", cp.boolean)
@@ -174,34 +181,4 @@ class JcDataclassLambdaTransformer (
         addInstruction { loc -> JcAssignInst(loc, res, cast) }
         addInstruction { loc -> JcReturnInst(loc, res) }
     }
-}
-
-fun BlockGenerationContext.compare(cp : JcClasspath, cond : JcConditionExpr, name : String) : JcLocalVar {
-
-    val endOfIf : JcInstRef
-    addInstruction { loc ->
-        val nextInst = JcInstRef(loc.index + 1)
-        val elseBranch = JcInstRef(loc.index + 3)
-        endOfIf = JcInstRef(loc.index + 5)
-        JcIfInst(loc, cond, nextInst, elseBranch)
-    }
-
-    val ifResVal = nextLocalVar("if$name", cp.boolean)
-    addInstruction { loc -> JcAssignInst(loc, ifResVal, JcBool(true, cp.boolean)) }
-    addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-    addInstruction { loc -> JcAssignInst(loc, ifResVal, JcBool(false, cp.boolean)) }
-    addInstruction { loc -> JcGotoInst(loc, endOfIf) }
-
-    return ifResVal
-}
-
-fun BlockGenerationContext.toBoolean(cp : JcClasspath, value : JcLocalVar) : JcLocalVar {
-    val boolType = cp.findType(JAVA_BOOL) as JcClassType
-    val castToBool = boolType.declaredMethods.single {
-        it.isStatic && it.name == "valueOf" && it.parameters.first().type.typeName == "boolean"
-    }
-    val res = nextLocalVar("toBool${value.name}", cp.findType(JAVA_BOOL))
-    val cast = JcStaticCallExpr(castToBool.staticMethodRef, listOf(value))
-    addInstruction { loc -> JcAssignInst(loc, res, cast) }
-    return res
 }

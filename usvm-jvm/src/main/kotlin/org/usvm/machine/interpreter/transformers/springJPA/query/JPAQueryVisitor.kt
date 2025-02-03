@@ -1,4 +1,4 @@
-package org.usvm.machine.interpreter.transformers.SpringJPA
+package org.usvm.machine.interpreter.transformers.springJPA
 
 import org.antlr.v4.runtime.tree.AbstractParseTreeVisitor
 import org.antlr.v4.runtime.tree.TerminalNode
@@ -151,7 +151,9 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         val root = visit(ctx.fromRoot()) as TableCtx
         val joins = mutableListOf<JoinCtx>()
         // TODO: visitJoin, visitCrossJoin, visitJpaCollectionJoin (deprecated)
-        for (i in 1 ..< ctx.childCount) { joins.add(visit(ctx.getChild(i)) as JoinCtx) }
+        for (i in 1..<ctx.childCount) {
+            joins.add(visit(ctx.getChild(i)) as JoinCtx)
+        }
         val tbl = TableWithJoinsCtx(root, joins)
         return tbl
     }
@@ -172,7 +174,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
 
     override fun visitEntityName(ctx: HqlParser.EntityNameContext): TableCtx.TableRootCtx.EntityNameCtx {
         val names = mutableListOf<String>()
-        ctx.children.forEach{ names.add(visitIdentifier(it as HqlParser.IdentifierContext)) }
+        ctx.children.forEach { names.add(visitIdentifier(it as HqlParser.IdentifierContext)) }
         val entName = TableCtx.TableRootCtx.EntityNameCtx(names)
         return entName
     }
@@ -236,16 +238,15 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         return if (ctx.instantiation() != null) {
             val inst = visitInstantiation(ctx.instantiation())
             SelectFunCtx.Inst(inst, null)
-        }
-        else if (ctx.mapEntrySelection() != null) {
+        } else if (ctx.mapEntrySelection() != null) {
             val path = visitPath(ctx.mapEntrySelection().path())
             SelectFunCtx.Entry(path, null)
-        }
-        else if (ctx.expressionOrPredicate() != null) {
+        } else if (ctx.expressionOrPredicate() != null) {
             val expr = visitExpressionOrPredicate(ctx.expressionOrPredicate())
             SelectFunCtx.Expr(expr, null)
-        }
-        else { SelectFunCtx.JpaSelect(null) } // TODO:
+        } else {
+            SelectFunCtx.JpaSelect(null)
+        } // TODO:
     }
 
     override fun visitMapEntrySelection(ctx: HqlParser.MapEntrySelectionContext?): Any {
@@ -371,12 +372,10 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         return if (ctx.identifier() != null) {
             val ident = visitIdentifier(ctx.identifier())
             OrderCtx.SortSpec.ByIdent(ident)
-        }
-        else if (ctx.expression() != null) {
+        } else if (ctx.expression() != null) {
             val expr = visit(ctx.expression()) as ExpressionCtx
             OrderCtx.SortSpec.ByExpr(expr)
-        }
-        else {
+        } else {
             val pos = intLiteral(ctx.INTEGER_LITERAL().text)
             OrderCtx.SortSpec.ByPos(pos)
         }
@@ -417,8 +416,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         return if (ctx.parameter() != null) {
             val param = visit(ctx.parameter()) as Parameter
             OrderCtx.ParamOrInt.Param(param)
-        }
-        else {
+        } else {
             val text = ctx.INTEGER_LITERAL().text
             val num = intLiteral(text)
             OrderCtx.ParamOrInt.Num(num)
@@ -550,7 +548,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     }
 
     override fun visitComparisonOperator(ctx: HqlParser.ComparisonOperatorContext): PredicateCtx.Compare.Operator {
-        return when(ctx.getChild(0).let { it as TerminalNode }.symbol.type) {
+        return when (ctx.getChild(0).let { it as TerminalNode }.symbol.type) {
             HqlLexer.EQUAL -> PredicateCtx.Compare.Operator.Equal
             HqlLexer.NOT_EQUAL -> PredicateCtx.Compare.Operator.NotEqual
             HqlLexer.GREATER -> PredicateCtx.Compare.Operator.Greater
@@ -749,8 +747,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         return if (ctx.path() != null) {
             val path = visitPath(ctx.path())
             ExpressionCtx.TypeOfPath(path)
-        }
-        else {
+        } else {
             val param = visit(ctx.parameter()) as Parameter
             ExpressionCtx.TypeOfParam(param)
         }
@@ -834,44 +831,44 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         return ExpressionCtx.LBool(ctx.TRUE() != null)
     }
 
-    fun intLiteral(text : String) : Int {
+    fun intLiteral(text: String): Int {
         return text.replace("_", "").toInt()
     }
 
-    fun longLiteral(text : String) : Long {
+    fun longLiteral(text: String): Long {
         return text.substring(0, text.length - 1).replace("_", "").toLong()
     }
 
-    fun bigIntLiteral(text : String) : String {
+    fun bigIntLiteral(text: String): String {
         return text.substring(0, text.length - 2).replace("_", "")
     }
 
-    fun floatLiteral(text : String) : Float {
+    fun floatLiteral(text: String): Float {
         return text.substring(0, text.length - 1).replace("_", "").toFloat()
     }
 
-    fun doubleLiteral(text : String) : Double {
+    fun doubleLiteral(text: String): Double {
         return text.substring(0, text.length - 1).replace("_", "").toDouble()
     }
 
-    fun bigDecimalLiteral(text : String) : String {
+    fun bigDecimalLiteral(text: String): String {
         return text.substring(0, text.length - 2).replace("_", "")
     }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun hexLongLiteral(text : String) : Long {
+    fun hexLongLiteral(text: String): Long {
         return text.substring(2, text.length - 1).replace("_", "").hexToLong()
     }
 
     @OptIn(ExperimentalStdlibApi::class)
-    fun hexIntLiteral(text : String) : Int {
+    fun hexIntLiteral(text: String): Int {
         return text.substring(2, text.length).replace("_", "").hexToInt()
     }
 
     override fun visitNumericLiteral(ctx: HqlParser.NumericLiteralContext): ExpressionCtx {
         val node = ctx.getChild(0) as TerminalNode
         val text = node.text
-        return when(node.symbol.type) {
+        return when (node.symbol.type) {
             HqlParser.INTEGER_LITERAL -> ExpressionCtx.LInt(intLiteral(text))
             HqlParser.LONG_LITERAL -> ExpressionCtx.LLong(longLiteral(text))
             HqlParser.BIG_INTEGER_LITERAL -> ExpressionCtx.LBigInt(bigIntLiteral(text))
@@ -888,7 +885,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     override fun visitBinaryLiteral(ctx: HqlParser.BinaryLiteralContext): ExpressionCtx {
         val node = ctx.getChild(0) as TerminalNode
         val nodeText = node.text
-        val text =  when(node.symbol.type) {
+        val text = when (node.symbol.type) {
             HqlParser.BINARY_LITERAL -> nodeText.substring(2, nodeText.length - 1)
             else -> ctx.children.joinToString { it.text.substring(2, 4) }
         }
