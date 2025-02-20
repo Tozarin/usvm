@@ -1,6 +1,7 @@
 package org.usvm.util
 
 import org.jacodb.api.jvm.*
+import org.jacodb.api.jvm.cfg.JcArgument
 import org.jacodb.api.jvm.cfg.JcInst
 import org.jacodb.api.jvm.ext.findFieldOrNull
 import org.jacodb.api.jvm.ext.findType
@@ -9,6 +10,7 @@ import org.jacodb.impl.types.JcClassTypeImpl
 import org.usvm.UConcreteHeapRef
 import org.usvm.UExpr
 import org.usvm.USort
+import org.usvm.instrumentation.util.toJcType
 import org.usvm.machine.JcContext
 import org.usvm.machine.JcTransparentInstruction
 import org.usvm.memory.ULValue
@@ -49,6 +51,11 @@ internal fun UWritableMemory<JcType>.allocHeapRef(type: JcType, useStaticAddress
 
 tailrec fun JcInst.originalInst(): JcInst = if (this is JcTransparentInstruction) originalInst.originalInst() else this
 
+fun JcMethod.isSame(other: JcMethod) =
+    this.name == other.name && this.description == other.description && this.signature == other.signature
+
+val JcMethod.isVoid: Boolean get() = returnType.typeName == "void"
+
 val JcClassType.name: String
     get() = if (this is JcClassTypeImpl) name else jcClass.name
 
@@ -56,7 +63,10 @@ val JcClassType.outerClassInstanceField: JcTypedField?
     get() = fields.singleOrNull { it.name == "this\$0" }
 
 val JcClassOrInterface.jvmDescriptor : String get() = "L${name.replace('.','/')};"
-val String.fromJvmDescriptor : String get() = this.drop(1).replace("/", ".")
+val String.fromJvmDescriptor : String get() {
+    val s = this.replace("/", ".")
+    return if (s.startsWith("L")) s.drop(1) else s
+}
 val String.genericTypes : List<String> get() = this
     .substringAfter("<")
     .substringBefore(">")

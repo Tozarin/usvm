@@ -2,15 +2,8 @@ package org.usvm.machine.interpreter.transformers.springjpa.query
 
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.cfg.JcLocalVar
-import org.jacodb.api.jvm.cfg.JcReturnInst
-import org.objectweb.asm.Opcodes
-import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer.BlockGenerationContext
-import org.usvm.machine.interpreter.transformers.springjpa.JcBodyFillerFeature
-import org.usvm.machine.interpreter.transformers.springjpa.JcMethodBuilder
-import org.usvm.machine.interpreter.transformers.springjpa.REPOSITORY_LAMBDA
 import org.usvm.machine.interpreter.transformers.springjpa.generateLambda
 import org.usvm.machine.interpreter.transformers.springjpa.query.predicate.PredicateCtx
-import org.usvm.machine.interpreter.transformers.springjpa.repositoryLambda
 
 class WhereCtx(
     val predicate: PredicateCtx
@@ -21,33 +14,12 @@ class WhereCtx(
     }
 
     fun getMethod(info: CommonInfo): JcMethod {
-        val methodName = info.names.getMethodName()
-        return JcMethodBuilder(info.repo)
-            .setName(methodName)
-            .setDesc("([Ljava/lang/Object;)Ljava/lang/Boolean;")
-            .setAccess(Opcodes.ACC_STATIC)
-            .addBlanckAnnot(REPOSITORY_LAMBDA)
-            .addFreshParam("java.lang.Object[]")
-            .addFillerFuture(LambdaFeature(info, predicate, methodName))
-            .buildMethod()
+        return predicate.toLambda(info)
     }
 
     fun getLambdaVar(ctx: MethodCtx): JcLocalVar {
         val method = getMethod(ctx.common)
         val lambda = ctx.genCtx.generateLambda("${ctx.getLambdaName()}Var", method)
         return lambda
-    }
-}
-
-class LambdaFeature(val info: CommonInfo, val predicate: PredicateCtx, val name: String) : JcBodyFillerFeature() {
-
-    override fun condition(method: JcMethod): Boolean {
-        return method.name == name && method.repositoryLambda
-    }
-
-    override fun BlockGenerationContext.generateBody(method: JcMethod) {
-        val ctx = MethodCtx(info.cp, info.query, info.repo, method, this)
-        val pr = predicate.genInst(ctx)
-        addInstruction { loc -> JcReturnInst(loc, pr) }
     }
 }

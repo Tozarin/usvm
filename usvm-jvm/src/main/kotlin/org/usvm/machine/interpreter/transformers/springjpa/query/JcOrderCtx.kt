@@ -30,7 +30,7 @@ class OrderCtx(
         tbl: JcLocalVar,
         ctx: MethodCtx
     ): JcLocalVar {
-
+        val methodArgs = ctx.getMethodArgs()
         return sorts.foldIndexed(tbl) { ix, acc, spec ->
             val translate = spec.getTranslate(ctx)
             val comparer = spec.getComparer(ctx)
@@ -38,7 +38,7 @@ class OrderCtx(
             val off = if (ix + 1 != sorts.size || offset == null) JcInt(0, ctx.cp.int) else offset!!.genInst(ctx)
             val dir = JcBool(spec.dir, ctx.cp.boolean)
             val nulls = JcBool(spec.nulls, ctx.cp.boolean)
-            val args = listOf(acc, lim, off, dir, nulls, translate, comparer)
+            val args = listOf(acc, lim, off, dir, nulls, translate, comparer, methodArgs)
             ctx.genCtx.generateNewWithInit("sortWrap$ix", ctx.common.orderType, args)
         }
     }

@@ -1,5 +1,6 @@
 package org.usvm.machine.interpreter.transformers.springjpa.query.table
 
+import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.cfg.JcAssignInst
 import org.jacodb.api.jvm.cfg.JcFieldRef
@@ -24,6 +25,10 @@ class TableRootCtx(
         }
     }
 
+    override fun getAlisas(info: CommonInfo): Pair<String, String>? {
+        return alias?.let { it to entityName.name }
+    }
+
     override fun genLambas(): List<JcMethod> {
         return listOf()
     }
@@ -35,8 +40,8 @@ class TableRootCtx(
         return cachedTbl as TableInfo.TableWithIdInfo
     }
 
-    override fun positions(info: CommonInfo): List<TableInfo.ColumnInfo> {
-        return getTbl(info).columnsInOrder()
+    override fun collectNames(info: CommonInfo): Map<String, List<JcField>> {
+        return mapOf(entityName.name to getTbl(info).origFieldsInOrder())
     }
 
     override fun genInst(ctx: MethodCtx): JcLocalVar {

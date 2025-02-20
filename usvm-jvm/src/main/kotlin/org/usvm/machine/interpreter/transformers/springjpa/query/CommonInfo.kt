@@ -3,19 +3,36 @@ package org.usvm.machine.interpreter.transformers.springjpa.query
 import org.jacodb.api.jvm.JcClassOrInterface
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
+import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcType
+import org.jacodb.api.jvm.cfg.JcArrayAccess
+import org.jacodb.api.jvm.cfg.JcAssignInst
 import org.jacodb.api.jvm.cfg.JcBool
+import org.jacodb.api.jvm.cfg.JcCallInst
+import org.jacodb.api.jvm.cfg.JcCastExpr
+import org.jacodb.api.jvm.cfg.JcClassConstant
+import org.jacodb.api.jvm.cfg.JcInt
 import org.jacodb.api.jvm.cfg.JcLocalVar
+import org.jacodb.api.jvm.cfg.JcNewExpr
+import org.jacodb.api.jvm.cfg.JcSpecialCallExpr
+import org.jacodb.api.jvm.cfg.JcValue
 import org.jacodb.api.jvm.ext.boolean
 import org.jacodb.api.jvm.ext.byte
 import org.jacodb.api.jvm.ext.findClass
 import org.jacodb.api.jvm.ext.findType
+import org.jacodb.api.jvm.ext.int
 import org.jacodb.api.jvm.ext.objectType
+import org.jacodb.api.jvm.ext.toType
+import org.usvm.instrumentation.util.toJcType
 import org.usvm.machine.interpreter.transformers.JcSingleInstructionTransformer
 import org.usvm.machine.interpreter.transformers.springjpa.DATABASES
+import org.usvm.machine.interpreter.transformers.springjpa.DATABASE_UTILS
 import org.usvm.machine.interpreter.transformers.springjpa.DISTINCT_TABLE
 import org.usvm.machine.interpreter.transformers.springjpa.FILTER_TABLE
+import org.usvm.machine.interpreter.transformers.springjpa.FLAT_TABLE
+import org.usvm.machine.interpreter.transformers.springjpa.ITABLE
+import org.usvm.machine.interpreter.transformers.springjpa.IWRAPPER
 import org.usvm.machine.interpreter.transformers.springjpa.JAVA_BIG_DECIMAL
 import org.usvm.machine.interpreter.transformers.springjpa.JAVA_BIG_INT
 import org.usvm.machine.interpreter.transformers.springjpa.JAVA_BOOL
@@ -23,17 +40,30 @@ import org.usvm.machine.interpreter.transformers.springjpa.JAVA_STRING
 import org.usvm.machine.interpreter.transformers.springjpa.JOIN_TABLE
 import org.usvm.machine.interpreter.transformers.springjpa.LIST_WRAPPER
 import org.usvm.machine.interpreter.transformers.springjpa.MAP_TABLE
+import org.usvm.machine.interpreter.transformers.springjpa.PAGE_IMPL_WRAPPER
+import org.usvm.machine.interpreter.transformers.springjpa.PAGE_WRAPPER
 import org.usvm.machine.interpreter.transformers.springjpa.SET_WRAPPER
+import org.usvm.machine.interpreter.transformers.springjpa.SINGLETON_TABLE
 import org.usvm.machine.interpreter.transformers.springjpa.SORTED_TABLE
+import org.usvm.machine.interpreter.transformers.springjpa.generateObjectArray
+import org.usvm.machine.interpreter.transformers.springjpa.generateStaticCall
+import org.usvm.machine.interpreter.transformers.springjpa.generatedFetchInit
+import org.usvm.machine.interpreter.transformers.springjpa.isGeneratedGetter
+import org.usvm.machine.interpreter.transformers.springjpa.methodRef
+import org.usvm.machine.interpreter.transformers.springjpa.parameterName
+import org.usvm.machine.interpreter.transformers.springjpa.putArgumentsToArray
+import org.usvm.machine.interpreter.transformers.springjpa.query.path.PathCtx
+import org.usvm.machine.interpreter.transformers.springjpa.toArgument
+import org.usvm.machine.state.concreteMemory.toTypedMethod
 import org.usvm.util.JcTableInfoCollector
-import org.usvm.util.TableInfo
 import org.usvm.util.genericTypes
 
 data class CommonInfo(
     val cp: JcClasspath,
     val query: QueryCtx,
     val repo: JcClassOrInterface,
-    val method: JcMethod
+    val method: JcMethod,
+    val origMethod: JcMethod
 ) {
     val collector: JcTableInfoCollector
         get() {
@@ -43,23 +73,30 @@ data class CommonInfo(
             }
         }
 
-    val names = NamesManager()
+    val names = NamesManager(method)
 
-    val origReturnGeneric: String = method.signature?.let { it.genericTypes[0] } ?: method.returnType.typeName
+    val origMethodArguments = origMethod.parameters.mapIndexed { ix, p -> p.parameterName to ix }.toMap()
+    val origReturnGeneric = origMethod.signature?.let { it.genericTypes[0] } ?: origMethod.returnType.typeName
 
-    val tblAliases = query.collectTblAliases()
-    val selAliases = query.collectSelAliases()
-    val positions = query.collectPositions(this)
-    val fetched = listOf<JcLocalVar>()
+    //val selectAliases = query.collectSelAliases() // TODO: it names columns for subqueries
+    val aliases = query.collectAliases(this) // alias to full name
+    val positions = query.collectRowPositions(this) // Foo.bar <-> (columnName <-> origField and index in row)
 
     val databases = cp.findType(DATABASES) as JcClassType
+    val wrapperType = cp.findType(IWRAPPER) as JcClassType
+    val pageType = cp.findType(PAGE_WRAPPER) as JcClassType
+    val pageImplType = cp.findType(PAGE_IMPL_WRAPPER) as JcClassType
     val setType = cp.findType(SET_WRAPPER) as JcClassType
     val listType = cp.findType(LIST_WRAPPER) as JcClassType
+    val tableType = cp.findType(ITABLE) as JcClassType
     val mapperType = cp.findType(MAP_TABLE) as JcClassType
     val filterType = cp.findType(FILTER_TABLE) as JcClassType
     val distinctType = cp.findType(DISTINCT_TABLE) as JcClassType
     val orderType = cp.findType(SORTED_TABLE) as JcClassType
     val joinType = cp.findType(JOIN_TABLE) as JcClassType
+    val flatType = cp.findType(FLAT_TABLE) as JcClassType
+    val singletonType = cp.findType(SINGLETON_TABLE) as JcClassType
+    val utilsType = cp.findType(DATABASE_UTILS) as JcClassType
 
     val boolType = cp.findType(JAVA_BOOL) as JcClassType
     val strType = cp.findType(JAVA_STRING) as JcClassType
@@ -67,6 +104,7 @@ data class CommonInfo(
     val bigDecimalType = cp.findType(JAVA_BIG_DECIMAL) as JcClassType
     val byteArrType = cp.arrayTypeOf(cp.byte, false, listOf()) // TODO: check nullability = false
     val objectArrType = cp.arrayTypeOf(cp.objectType, false, listOf())
+    val classType = cp.findType("java.lang.Class")
 
     val booleanValue = boolType.declaredMethods.single { it.name == "booleanValue" }
     val castToBool = boolType.declaredMethods.single {
@@ -77,38 +115,61 @@ data class CommonInfo(
     val jcFalse = JcBool(false, cp.boolean)
 }
 
-class NamesManager {
+class NamesManager(val method: JcMethod) {
     var namesCounter = 0
+
     fun getLambdaName(): String {
-        return "\$lambda#${namesCounter++}"
+        return "\$lambda#${method.name}#${namesCounter++}"
     }
 
     fun getMethodName(): String {
-        return "\$method#${namesCounter++}"
+        return "\$method#${method.name}#${namesCounter++}"
     }
 
     fun getPredicateName(): String {
-        return "\$predicate#${namesCounter++}"
+        return "\$predicate#${method.name}#${namesCounter++}"
     }
 
     fun getVarName(): String {
-        return "#${namesCounter++}"
+        return "\$var#${method.name}#${namesCounter++}"
     }
+
+    fun getQueryName(): String {
+        return "\$tblName#${method.name}#${namesCounter++}"
+    }
+
 }
 
 class MethodCtx(
     val cp: JcClasspath,
     query: QueryCtx,
     repo: JcClassOrInterface,
-    method: JcMethod,
+    val method: JcMethod,
+    origMethod: JcMethod,
     val genCtx: JcSingleInstructionTransformer.BlockGenerationContext
 ) {
 
     constructor(info: CommonInfo, genCtx: JcSingleInstructionTransformer.BlockGenerationContext)
-            : this(info.cp, info.query, info.repo, info.method, genCtx)
+            : this(info.cp, info.query, info.repo, info.method, info.origMethod, genCtx)
 
-    val common = CommonInfo(cp, query, repo, method)
+    val common = CommonInfo(cp, query, repo, method, origMethod)
     val names = common.names
+
+    private var methodArgs: JcLocalVar? = null
+    fun getMethodArgs(): JcLocalVar {
+        methodArgs?.also { return it }
+        methodArgs = genCtx.putArgumentsToArray(cp, "methodArgs", method)
+        return methodArgs!!
+    }
+
+    fun columns(path: PathCtx): Map<String, Pair<JcField, Int>> {
+        val fullName = path.applyAliases(common)
+        return common.positions[fullName]!!
+    }
+
+    fun applyAliases(alias: String): String {
+        return common.aliases.getOrDefault(alias, alias)
+    }
 
     fun getLambdaName(): String {
         return names.getLambdaName()
@@ -126,15 +187,82 @@ class MethodCtx(
         return names.getPredicateName()
     }
 
-    fun addPositions(names: List<TableInfo.ColumnInfo>) {
-        common.positions.toMutableList().addAll(names)
-    }
-
-    fun addFetched(fetched: List<JcLocalVar>) {
-        common.fetched.toMutableList().addAll(fetched)
-    }
 
     fun newVar(type: JcType): JcLocalVar {
         return genCtx.nextLocalVar(common.names.getVarName(), type)
+    }
+
+    fun typeConst(type: JcType): JcValue {
+        return JcClassConstant(type, common.classType)
+    }
+
+    fun genStaticCall(name: String, methodName: String, args: List<JcValue>): JcLocalVar {
+        return genCtx.generateStaticCall(name, methodName, common.utilsType, args)
+    }
+
+    private var currObj: JcLocalVar? = null
+    fun genObj(name: String): JcLocalVar {
+
+        currObj?.also { return it }
+
+        val aliased = applyAliases(name)
+        val fields = common.positions[aliased]!!.values
+
+        val newRow = genCtx.generateObjectArray(cp, common.names.getVarName(), fields.count())
+
+        val row = common.method.parameters.first().toArgument
+        fields.forEachIndexed { ix, (_, oldIx) ->
+            val elem = JcArrayAccess(newRow, JcInt(ix, cp.int), cp.objectType)
+            val value = JcArrayAccess(row, JcInt(oldIx, cp.int), cp.objectType)
+            genCtx.addInstruction { loc -> JcAssignInst(loc, elem, value) }
+        }
+
+        val origClass = common.collector.getTableByPartName(aliased).single().origClass
+        val res = newVar(origClass.toType())
+        val obj = JcNewExpr(origClass.toType())
+        genCtx.addInstruction { loc -> JcAssignInst(loc, res, obj) }
+
+        val init = origClass.declaredMethods.single { it.generatedFetchInit }
+
+        val initCall = JcSpecialCallExpr(init.toTypedMethod.methodRef, res, listOf(newRow))
+        genCtx.addInstruction { loc -> JcCallInst(loc, initCall) }
+
+        currObj = res
+        return res
+    }
+
+    fun genField(root: String, fields: List<String>): JcLocalVar {
+        return genComplexField(root, fields)
+    }
+
+    private fun genFirstGField(root: String, name: String): JcLocalVar {
+        // mb always call genComplexField instead
+        val (field, pos) = common.positions[applyAliases(root)]!![name]!!
+        val row = common.method.parameters.first().toArgument
+
+        val fld = newVar(cp.objectType)
+        val elem = JcArrayAccess(row, JcInt(pos, cp.int), cp.objectType)
+        genCtx.addInstruction { loc -> JcAssignInst(loc, fld, elem) }
+
+        val fieldType = field.type.toJcType(cp)!!
+        val casted = newVar(fieldType)
+        val cast = JcCastExpr(fieldType, fld)
+        genCtx.addInstruction { loc -> JcAssignInst(loc, casted, cast) }
+
+        return casted
+    }
+
+    private fun genComplexField(root: String, fields: List<String>): JcLocalVar {
+        val obj = genObj(root)
+        return fields.fold(obj) { acc, fieldName ->
+            val classType = acc.type as JcClassType
+            val getter = classType.declaredMethods.single { it.method.isGeneratedGetter(fieldName) }
+
+            val v = newVar(getter.returnType)
+            val call = JcSpecialCallExpr(getter.methodRef, acc, listOf())
+            genCtx.addInstruction { loc -> JcAssignInst(loc, v, call) }
+
+            v
+        }
     }
 }

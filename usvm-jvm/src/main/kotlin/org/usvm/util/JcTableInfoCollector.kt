@@ -2,38 +2,45 @@ package org.usvm.util
 
 import org.jacodb.api.jvm.JcAnnotation
 import org.jacodb.api.jvm.JcClassOrInterface
+import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
 import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.TypeName
 import org.jacodb.api.jvm.ext.fields
 import org.jacodb.api.jvm.ext.findClass
+import org.jacodb.api.jvm.ext.toType
 import org.usvm.instrumentation.util.toJcClassOrInterface
 
 class JcTableInfoCollector(
-    private val cp : JcClasspath
+    private val cp: JcClasspath
 ) {
 
     private val tablesInfo = HashMap<String, TableInfo.TableWithIdInfo>()
     private val btwTablesInfo = HashMap<String, TableInfo>()
 
-    fun allTables() : List<TableInfo> {
+    fun allTables(): List<TableInfo> {
         return tablesInfo.values + btwTablesInfo.values
     }
 
-    fun tables() : List<TableInfo.TableWithIdInfo> {
+    fun tables(): List<TableInfo.TableWithIdInfo> {
         return tablesInfo.values.toList()
     }
 
-    fun getBtwTable(name : String) : TableInfo? {
+    fun getBtwTable(name: String): TableInfo? {
         return btwTablesInfo[name]
     }
 
-    private fun collectFields(clazz : JcClassOrInterface): List<JcField> {
+    fun getTableByPartName(name: String): List<TableInfo.TableWithIdInfo> {
+        return tables().filter { it.origClass.name.contains(name) }
+    }
+
+    fun collectFields(clazz: JcClassOrInterface): List<JcField> {
 
         val supClass = clazz.superClass
         val columns = clazz.fields +
                 if (supClass != null
-                    && supClass.annotations.any { it.jcClass?.simpleName.equals("MappedSuperclass") })
+                    && supClass.annotations.any { it.jcClass?.simpleName.equals("MappedSuperclass") }
+                )
                     collectFields(supClass)
                 else
                     listOf()
@@ -41,12 +48,13 @@ class JcTableInfoCollector(
         return columns.sortedBy { it.name }
     }
 
-    fun collectTable(clazz : JcClassOrInterface) : TableInfo.TableWithIdInfo {
+    fun collectTable(clazz: JcClassOrInterface): TableInfo.TableWithIdInfo {
 
+        // TODO: think about cache
         val name = getTableName(clazz)
         val fields = collectFields(clazz)
         val idField = fields
-            .find { contains(it.annotations, "Id") }!!
+            .single { contains(it.annotations, "Id") }
         val idColumn = idField.let { TableInfo.ColumnInfo(getColumnName(it), it.type, idField, true) }
         val idType = idField.type
 
@@ -63,7 +71,8 @@ class JcTableInfoCollector(
             if (
                 !contains(
                     field.annotations,
-                    listOf("OneToOne", "OneToMany", "ManyToOne", "ManyToMany"))
+                    listOf("OneToOne", "OneToMany", "ManyToOne", "ManyToMany")
+                )
             ) {
 
                 val colInfo = TableInfo.ColumnInfo(simpleColName, field.type, field, true)
@@ -71,7 +80,7 @@ class JcTableInfoCollector(
                 return@forEach
             }
 
-            val subClass = field.signature?.genericTypes?.let { cp.findClass(it[0])}
+            val subClass = field.signature?.genericTypes?.let { cp.findClass(it[0]) }
                 ?: cp.findClass(field.type.typeName)
 
             val subTable = collectTable(subClass)
@@ -80,24 +89,27 @@ class JcTableInfoCollector(
             val rel = Relation.fromField(classTable, subTable, field)!!
             relations.add(rel)
 
-            when(rel) {
+            when (rel) {
                 is Relation.OneToOne -> {
                     if (rel.mappedBy != null) return@forEach
                     tableColumns.add(
                         TableInfo.ColumnInfo(rel.join.colName, subIdType, field, false)
                     )
                 }
+
                 is Relation.OneToManyByColumn -> {
                     if (rel.mappedBy != null) return@forEach
                     subTable.insertColumn(
                         TableInfo.ColumnInfo(rel.join!!.colName, idType, field, false)
                     )
                 }
+
                 is Relation.ManyToOne -> {
                     tableColumns.add(
                         TableInfo.ColumnInfo(rel.join.colName, subIdType, field, false)
                     )
                 }
+
                 is Relation.RelationByTable -> {
                     val newTable = rel.joinTable.toTable()
                     btwTablesInfo[newTable.name] = newTable
@@ -108,7 +120,7 @@ class JcTableInfoCollector(
         return classTable
     }
 
-    fun findSubTable(field : JcField) : TableInfo.TableWithIdInfo? {
+    fun findSubTable(field: JcField): TableInfo.TableWithIdInfo? {
         val subClass = field.signature?.genericTypes?.get(0)?.let { cp.findClass(it) }
             ?: field.type.toJcClassOrInterface(cp)!!
         return tablesInfo.get(getTableName(subClass))
@@ -116,43 +128,48 @@ class JcTableInfoCollector(
 }
 
 open class TableInfo(
-    val name : String,
-    val columns : List<ColumnInfo>,
-    val relations : List<Relation>
+    val name: String,
+    val columns: List<ColumnInfo>,
+    val relations: List<Relation>
 ) {
 
     data class ColumnInfo(
-        val name : String,
-        val type : TypeName,
-        val origField : JcField,
-        val isOrig : Boolean
+        val name: String,
+        val type: TypeName,
+        val origField: JcField,
+        val isOrig: Boolean
     )
 
     class TableWithIdInfo(
-        name : String,
-        columns : List<ColumnInfo>,
-        relations : List<Relation>,
-        val idColumn : ColumnInfo,
-        val origClass : JcClassOrInterface
+        name: String,
+        columns: List<ColumnInfo>,
+        relations: List<Relation>,
+        val idColumn: ColumnInfo,
+        val origClass: JcClassOrInterface
     ) : TableInfo(name, columns, relations) {
 
-        fun jkName() : String {
+        fun jkName(): String {
             return "${name}_${idColumn.name}"
         }
 
-        fun jkColumnInfo() : ColumnInfo {
+        fun jkColumnInfo(): ColumnInfo {
             val name = jkName()
             val type = idColumn.type
             val field = idColumn.origField
             return ColumnInfo(name, type, field, false)
         }
 
-        fun idColIndex() : Int {
+        fun idColIndex(): Int {
             return indexOfCol(idColumn)
         }
 
-        fun columnsInOrder() : List<ColumnInfo> {
+        fun columnsInOrder(): List<ColumnInfo> {
             return columns.sortedBy { it.name }
+        }
+
+        fun origFieldsInOrder(): List<JcField> {
+            return JcTableInfoCollector(origClass.classpath).collectFields(origClass)
+                .sortedBy { getColumnName(it) }
         }
     }
 
@@ -160,26 +177,39 @@ open class TableInfo(
         columns.toMutableList().add(col)
     }
 
-    fun indexOfCol(col : ColumnInfo) : Int {
+    fun indexOfCol(col: ColumnInfo): Int {
         return columns.sortedBy { it.name }.indexOf(col)
     }
 
-    fun indexOfField(field: JcField) : Int {
+    fun indexOfField(field: JcField): Int {
         return columns.sortedBy { it.name }.indexOfFirst { it.origField == field }
     }
 
-    fun orderedRelations() : List<Relation> {
+    fun orderedRelations(): List<Relation> {
         return relations.sortedBy { it.toString() }
     }
 }
 
 sealed class Relation(
-    val origField : JcField
+    val origField: JcField
 ) {
 
     abstract val mappedBy: String?
 
-    override fun toString() : String {
+    open fun toTableName(cp: JcClasspath): String {
+        return getTableName(relatedDataclass(cp))
+    }
+
+    fun relatedDataclass(cp: JcClasspath): JcClassOrInterface {
+        return origField.signature?.let { cp.findClass(it.genericTypes[0]) }
+            ?: origField.type.toJcClassOrInterface(cp)!!
+    }
+
+    fun relatedDataclassType(cp: JcClasspath): JcClassType {
+        return relatedDataclass(cp).toType()
+    }
+
+    override fun toString(): String {
         return "\$r${origField.enclosingClass.name}.${origField.name}"
     }
 
@@ -192,7 +222,7 @@ sealed class Relation(
         val joinCol: TableInfo.ColumnInfo,
         val inverseJoinCol: TableInfo.ColumnInfo
     ) {
-        fun toTable() : TableInfo {
+        fun toTable(): TableInfo {
             return TableInfo(name, listOf(joinCol, inverseJoinCol), listOf())
         }
     }
@@ -200,7 +230,11 @@ sealed class Relation(
     sealed class RelationByTable(
         val joinTable: JoinTable,
         origField: JcField
-    ) : Relation(origField)
+    ) : Relation(origField) {
+        override fun toTableName(cp: JcClasspath): String {
+            return joinTable.name
+        }
+    }
 
     sealed class RelationByColumn(
         val join: Join,
@@ -266,10 +300,10 @@ sealed class Relation(
         }
 
         fun fromField(
-            classTable : TableInfo.TableWithIdInfo,
-            subTable : TableInfo.TableWithIdInfo,
+            classTable: TableInfo.TableWithIdInfo,
+            subTable: TableInfo.TableWithIdInfo,
             field: JcField
-        ) : Relation? {
+        ): Relation? {
 
             val simpleName = databaseName(field.name)
             val commonName = "${simpleName}_${subTable.idColumn.name}"

@@ -5,7 +5,6 @@ import org.jacodb.api.jvm.cfg.JcArrayAccess
 import org.jacodb.api.jvm.cfg.JcAssignInst
 import org.jacodb.api.jvm.cfg.JcInt
 import org.jacodb.api.jvm.cfg.JcLocalVar
-import org.jacodb.api.jvm.cfg.JcNewArrayExpr
 import org.jacodb.api.jvm.cfg.JcReturnInst
 import org.jacodb.api.jvm.ext.int
 import org.jacodb.api.jvm.ext.jvmName
@@ -16,6 +15,7 @@ import org.usvm.machine.interpreter.transformers.springjpa.JcBodyFillerFeature
 import org.usvm.machine.interpreter.transformers.springjpa.JcMethodBuilder
 import org.usvm.machine.interpreter.transformers.springjpa.REPOSITORY_LAMBDA
 import org.usvm.machine.interpreter.transformers.springjpa.generateLambda
+import org.usvm.machine.interpreter.transformers.springjpa.generateObjectArray
 import org.usvm.machine.interpreter.transformers.springjpa.query.CommonInfo
 import org.usvm.machine.interpreter.transformers.springjpa.query.MethodCtx
 import org.usvm.machine.interpreter.transformers.springjpa.repositoryLambda
@@ -38,16 +38,21 @@ class SelectFunCtx(
         return listOf(getSelector(info))
     }
 
+    var cachedSelector: JcMethod? = null
     fun getSelector(info: CommonInfo): JcMethod {
+        cachedSelector?.also { return it }
         val methodName = info.names.getLambdaName()
-        return JcMethodBuilder(info.repo)
+        val method = JcMethodBuilder(info.repo)
             .setName(methodName)
-            .setDesc("([Ljava/lang/Object;)${info.origReturnGeneric.jvmName()}")
+            .setDesc("([Ljava/lang/Object;[Ljava/lang/Object;)${info.origReturnGeneric.jvmName()}")
             .setAccess(Opcodes.ACC_STATIC)
             .addBlanckAnnot(REPOSITORY_LAMBDA)
             .addFreshParam("java.lang.Object[]")
+            .addFreshParam("java.lang.Object[]")
             .addFillerFuture(SelectFuture(info, this, methodName))
             .buildMethod()
+        cachedSelector = method
+        return method
     }
 
     fun getLambdaVar(ctx: MethodCtx): JcLocalVar {
@@ -63,16 +68,13 @@ class SelectFunCtx(
         }
 
         override fun BlockGenerationContext.generateBody(method: JcMethod) {
-            val ctx = MethodCtx(info.cp, info.query, info.repo, method, this)
+            val ctx = MethodCtx(info.cp, info.query, info.repo, method, info.origMethod, this)
 
             val selVars = select.selections.map { it.genInst(ctx) }
             if (ctx.common.origReturnGeneric != "java.lang.Object[]") {
                 ctx.genCtx.addInstruction { loc -> JcReturnInst(loc, selVars.single()) }
             } else {
-                val res = ctx.newVar(info.objectArrType)
-                val arr = JcNewArrayExpr(info.objectArrType, listOf(JcInt(selVars.size, ctx.cp.int)))
-                ctx.genCtx.addInstruction { loc -> JcAssignInst(loc, res, arr) }
-
+                val res = ctx.genCtx.generateObjectArray(ctx.cp, ctx.names.getVarName(), selVars.size)
                 selVars.forEachIndexed { ix, s ->
                     val ass = JcArrayAccess(res, JcInt(ix, ctx.cp.int), ctx.cp.objectType)
                     ctx.genCtx.addInstruction { loc -> JcAssignInst(loc, ass, s) }

@@ -33,8 +33,8 @@ class JcMethodBodyFiller(
 
 abstract class JcBodyFillerFeature : JcMethodExtFeature {
 
-    abstract fun BlockGenerationContext.generateBody(method: JcMethod)
     abstract fun condition(method: JcMethod): Boolean
+    abstract fun BlockGenerationContext.generateBody(method: JcMethod)
 
     override fun instList(method: JcMethod): JcMethodExtFeature.JcInstListResult? {
 

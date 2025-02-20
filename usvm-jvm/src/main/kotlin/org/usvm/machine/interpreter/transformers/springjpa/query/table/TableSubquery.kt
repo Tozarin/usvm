@@ -1,5 +1,6 @@
 package org.usvm.machine.interpreter.transformers.springjpa.query.table
 
+import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.cfg.JcLocalVar
 import org.usvm.machine.interpreter.transformers.springjpa.SelectCtx
@@ -15,11 +16,15 @@ class TableSubquery {
         alias: String?
     ) : TableCtx(alias) {
 
+        override fun getAlisas(info: CommonInfo): Pair<String, String>? {
+            return alias?.let { it to info.names.getQueryName() }
+        }
+
         override fun genLambas(): List<JcMethod> {
             TODO("Not yet implemented")
         }
 
-        override fun positions(info: CommonInfo): List<TableInfo.ColumnInfo> {
+        override fun collectNames(info: CommonInfo): Map<String, List<JcField>> {
             TODO("Not yet implemented")
         }
 

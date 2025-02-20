@@ -10,6 +10,7 @@ import org.jacodb.api.jvm.JcTypedMethod
 import org.jacodb.api.jvm.cfg.BsmHandleTag
 import org.jacodb.api.jvm.cfg.BsmMethodTypeArg
 import org.jacodb.api.jvm.cfg.JcArgument
+import org.jacodb.api.jvm.cfg.JcArrayAccess
 import org.jacodb.api.jvm.cfg.JcAssignInst
 import org.jacodb.api.jvm.cfg.JcBool
 import org.jacodb.api.jvm.cfg.JcCallInst
@@ -17,8 +18,10 @@ import org.jacodb.api.jvm.cfg.JcConditionExpr
 import org.jacodb.api.jvm.cfg.JcGotoInst
 import org.jacodb.api.jvm.cfg.JcIfInst
 import org.jacodb.api.jvm.cfg.JcInstRef
+import org.jacodb.api.jvm.cfg.JcInt
 import org.jacodb.api.jvm.cfg.JcLambdaExpr
 import org.jacodb.api.jvm.cfg.JcLocalVar
+import org.jacodb.api.jvm.cfg.JcNewArrayExpr
 import org.jacodb.api.jvm.cfg.JcNewExpr
 import org.jacodb.api.jvm.cfg.JcSpecialCallExpr
 import org.jacodb.api.jvm.cfg.JcStaticCallExpr
@@ -26,6 +29,7 @@ import org.jacodb.api.jvm.cfg.JcThis
 import org.jacodb.api.jvm.cfg.JcValue
 import org.jacodb.api.jvm.ext.boolean
 import org.jacodb.api.jvm.ext.findType
+import org.jacodb.api.jvm.ext.int
 import org.jacodb.api.jvm.ext.objectType
 import org.jacodb.api.jvm.ext.toType
 import org.jacodb.impl.cfg.TypedMethodRefImpl
@@ -43,7 +47,9 @@ const val JAVA_BIG_INT = "java.math.BigInteger"
 const val JAVA_BIG_DECIMAL = "java.math.BigDecimal"
 
 const val INIT_ANNOT = "\$generatedInit"
+const val INIT_FETCH_ANNOT = "\$generatedFetchedAnnot"
 const val GET_ID_ANNOT = "\$generatedGetId"
+const val DATACLASS_GETTER = "\$generatedDataclassGetter"
 const val FILTER_ANNOT = "\$generatedFilter"
 const val FILTER_BTW_ANNOT = "\$generatedBtwFilter"
 const val SELECT_BTW_ANNOT = "\$generatedBtwSelector"
@@ -53,7 +59,12 @@ const val IDENTITY_ANNOT = "\$generatedIdent"
 const val REPOSITORY_LAMBDA = "\$queryLambda"
 
 const val DATABASES = "SpringDatabases"
+const val CRUD_MANAGER = "generated.org.springframework.boot.databases.CrudManager"
 const val ITABLE = "generated.org.springframework.boot.databases.ITable"
+const val BASE_TABLE = "generated.org.springframework.boot.databases.BaseTable"
+const val IWRAPPER = "generated.org.springframework.boot.databases.IWrapper"
+const val PAGE_WRAPPER = "org.springframework.data.domain.Page"
+const val PAGE_IMPL_WRAPPER = "org.springframework.data.domain.PageImpl"
 const val SET_WRAPPER = "generated.org.springframework.boot.databases.SetWrapper"
 const val LIST_WRAPPER = "generated.org.springframework.boot.databases.ListWrapper"
 const val MAP_TABLE = "generated.org.springframework.boot.databases.MappedTable"
@@ -61,19 +72,29 @@ const val FILTER_TABLE = "generated.org.springframework.boot.databases.FiltredTa
 const val SORTED_TABLE = "generated.org.springframework.boot.databases.SortedTable"
 const val JOIN_TABLE = "generated.org.springframework.boot.databases.JoinedTable"
 const val DISTINCT_TABLE = "generated.org.springframework.boot.databases.DistinctTable"
+const val FLAT_TABLE = "generated.org.springframework.boot.databases.FlatTable"
+const val SINGLETON_TABLE = "generated.org.springframework.boot.databases.SingletonTable"
+const val DATABASE_UTILS = "generated.org.springframework.boot.databases.Utils"
 
 const val PREDICATE = "java.util.function.Predicate"
 const val FUNCTION = "java.util.function.Function"
+const val FUNCTION2 = "java.util.function.Function2"
 
 val JcMethod.generatedSubFilter: Boolean get() = contains(this.annotations, FILTER_ANNOT)
 val JcMethod.generatedBtwFilter: Boolean get() = contains(this.annotations, FILTER_BTW_ANNOT)
 val JcMethod.generatedBtwSelect: Boolean get() = contains(this.annotations, SELECT_BTW_ANNOT)
 val JcMethod.generatedSetFilter: Boolean get() = contains(this.annotations, FILTER_SET_ANNOT)
 val JcMethod.generatedGetId: Boolean get() = contains(annotations, GET_ID_ANNOT)
+val JcMethod.generatedGetter: Boolean get() = contains(annotations, DATACLASS_GETTER)
 val JcMethod.generatedIdentity: Boolean get() = contains(annotations, IDENTITY_ANNOT)
 val JcMethod.generatedSerializer: Boolean get() = contains(annotations, SERIALIZER_ANNOT)
 val JcMethod.generatedInit: Boolean get() = contains(this.annotations, INIT_ANNOT)
+val JcMethod.generatedFetchInit: Boolean get() = contains(this.annotations, INIT_FETCH_ANNOT)
 val JcMethod.repositoryLambda: Boolean get() = contains(annotations, REPOSITORY_LAMBDA)
+
+fun JcMethod.isGeneratedGetter(fieldName: String): Boolean {
+    return contains(annotations, DATACLASS_GETTER) && contains(annotations, fieldName)
+}
 
 val JcClassOrInterface.isDataClass: Boolean get() = contains(annotations, "Entity")
 val JcClassOrInterface.isJpaRepository: Boolean
@@ -99,6 +120,11 @@ val JcTypedMethod.staticMethodRef: TypedStaticMethodRefImpl
 val JcMethod.query: String?
     get() =
         annotations.find { nameEquals(it, "Query") }?.values?.get("value") as String?
+
+val JcParameter.parameterName: String
+    get() =
+        annotations.find { nameEquals(it, "Param") }?.values?.get("value") as String?
+            ?: name!!
 
 val JcParameter.toArgument: JcArgument
     get() = JcArgument(index, name!!, type.toJcType(method.enclosingClass.classpath)!!)
@@ -140,19 +166,59 @@ fun BlockGenerationContext.generateNew(name: String, type: JcType): JcLocalVar {
     return vari
 }
 
+fun BlockGenerationContext.generateObjectArray(cp: JcClasspath, name: String, size: Int): JcLocalVar {
+    val objArrayType = cp.arrayTypeOf(cp.objectType, true, listOf())
+    val vari = nextLocalVar(name, objArrayType)
+    val arr = JcNewArrayExpr(objArrayType, listOf(JcInt(size, cp.int)))
+    addInstruction { loc -> JcAssignInst(loc, vari, arr) }
+    return vari;
+}
+
+fun BlockGenerationContext.putArgumentsToArray(cp: JcClasspath, name: String, method: JcMethod): JcLocalVar {
+    val arr = generateObjectArray(cp, "args#$name", method.parameters.size)
+    method.parameters.forEachIndexed { ix, p ->
+        val access = JcArrayAccess(arr, JcInt(ix, cp.int), cp.objectType)
+        addInstruction { loc -> JcAssignInst(loc, access, p.toArgument) }
+    }
+    return arr
+}
+
 fun BlockGenerationContext.generateNewWithInit(name: String, type: JcClassType, args: List<JcValue>): JcLocalVar {
     val vari = generateNew(name, type)
-    val init = type.declaredMethods.single { it.name == "<init>" && it.parameters.size == args.size }
+    val init = type.declaredMethods.single {
+        it.name == "<init>" && it.parameters.size == args.size
+        //&& it.method.description == "(${args.joinToString(separator = "") { it.type.internalName.jvmName() }})V"
+    }
     val call = JcSpecialCallExpr(init.methodRef, vari, args)
     addInstruction { loc -> JcCallInst(loc, call) }
     return vari
+}
+
+// method with methodName and sizeOf(args) count of arguments is single in clazz
+fun BlockGenerationContext.generateStaticCall(
+    name: String,
+    methodName: String,
+    clazz: JcClassType,
+    args: List<JcValue>
+): JcLocalVar {
+    val method =
+        clazz.declaredMethods.single { it.name == methodName && it.parameters.size == args.size && it.isStatic }
+    val res = nextLocalVar(name, method.returnType)
+    val call = JcStaticCallExpr(method.methodRef, args)
+    addInstruction { loc -> JcAssignInst(loc, res, call) }
+    return res
 }
 
 fun BlockGenerationContext.generateLambda(cp: JcClasspath, name: String, method: JcMethod): JcLocalVar {
     val (callSiteName, callSiteRetType) = if (method.returnType.typeName == "java.lang.Boolean") {
         Pair("test", cp.findType(PREDICATE))
     } else {
-        Pair("apply", cp.findType(FUNCTION))
+        val type = if (method.parameters.size == 1) {
+            cp.findType(FUNCTION)
+        } else {
+            cp.findType(FUNCTION + method.parameters.size)
+        }
+        Pair("apply", type)
     }
 
     val lambdaVar = nextLocalVar(name, callSiteRetType)

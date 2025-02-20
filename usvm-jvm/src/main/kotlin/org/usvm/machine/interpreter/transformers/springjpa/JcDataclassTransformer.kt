@@ -16,29 +16,6 @@ import org.usvm.util.TableInfo
 import org.usvm.util.getSetFieldName
 import org.usvm.util.jvmDescriptor
 
-
-// cp.findClass("generated.org.springframework.boot.databases.FirstDataClass")
-//"org.springframework.samples.petclinic.vet.Vet"
-
-object TestTransformer : JcClassExtFeature {
-
-    var b: Int = 0
-    override fun methodsOf(clazz: JcClassOrInterface): List<JcMethod>? {
-
-        if (clazz.classpath.findClass("SpringDatabases").declaredFields.size == 0 || b == 1) return null
-
-        b++;
-        val cp = clazz.classpath
-        val foo = cp.findClass("org.springframework.samples.petclinic.owner.OwnerRepository")
-        val bar = foo.declaredMethods.find { it.name == "findPetTypes" }!!
-        //val bar = foo.declaredMethods.find { it.name == "findById" }!!
-
-        println(bar.instList)
-
-        return null
-    }
-}
-
 object JcDataclassTransformer : JcClassExtFeature {
 
     // prevents cycles
@@ -127,22 +104,33 @@ private class SignatureGenerator(
     val clazz = classTable.origClass
 
     fun getFunctions(): List<JcMethod> {
-        return persistentListOf(getConstructor(), getId(), getSerializer(), getIdentity()).addAll(getLambdas())
+        val init = getConstructor()
+        val funs = persistentListOf(
+            init,
+            getId(),
+            getSerializer(),
+            getIdentity()
+        )
+            .addAll(getLambdas())
+            .addAll(getters())
+        return if (classTable.orderedRelations().isNotEmpty()) funs.add(getConstructorWithFetched(init)) else funs
     }
 
     fun getConstructor(): JcMethod {
         val relTables = classTable.orderedRelations()
-        val builder = JcMethodBuilder(clazz).setName("<init>").addBlanckAnnot(INIT_ANNOT)
+        val builder = JcMethodBuilder(clazz).setName("<init>")
+
+        builder.addBlanckAnnot(if (relTables.isEmpty()) INIT_FETCH_ANNOT else INIT_ANNOT)
 
         val origInit = originalMethods.single { it.name == "<init>" && it.parameters.isEmpty() }
         builder.addFillerFuture(JcInitTransformer(cp, classTable, origInit))
 
-        val itableDesc = cp.findClass("generated.org.springframework.boot.databases.ITable").jvmDescriptor
+        val itableDesc = cp.findClass(ITABLE).jvmDescriptor
 
         val desc = "([Ljava/lang/Object;${relTables.joinToString(separator = "") { itableDesc }})V"
         val signature = "([Ljava/lang/Object;${
             relTables.joinToString(separator = "") { rel ->
-                "${itableDesc}<${rel.origField.enclosingClass.jvmDescriptor}>"
+                "${itableDesc}<${rel.relatedDataclass(cp).jvmDescriptor}>"
             }
         };)V"
         builder.setDesc(desc)
@@ -154,12 +142,37 @@ private class SignatureGenerator(
         return builder.buildMethod()
     }
 
+    fun getConstructorWithFetched(generatedInit: JcMethod): JcMethod {
+        return JcMethodBuilder(clazz)
+            .setName("<init>")
+            .addBlanckAnnot(INIT_FETCH_ANNOT)
+            .setDesc("([Ljava/lang/Object;)V")
+            .addFreshParam("java.lang.Object[]")
+            .addFillerFuture(JcFetchedInitTransformer(cp, classTable, generatedInit))
+            .buildMethod()
+    }
+
     fun getId(): JcMethod {
         return JcMethodBuilder(clazz)
             .setName("\$getId").addBlanckAnnot(GET_ID_ANNOT)
             .setDesc("()L${classTable.idColumn.type.internalDesc};")
             .addFillerFuture(JcGetIdTransformer(classTable))
             .buildMethod()
+    }
+
+    fun getters(): List<JcMethod> {
+        return classTable.origFieldsInOrder().map { field ->
+            val name = "\$get${clazz.name}.${field.name}"
+            val sig = field.signature?.let { "()$it" }
+            JcMethodBuilder(clazz)
+                .setName(name)
+                .addBlanckAnnot(DATACLASS_GETTER)
+                .addBlanckAnnot(field.name)
+                .setDesc("()L${field.type.internalDesc};")
+                .setSignature(sig)
+                .addFillerFuture(JcGetterTransformer(clazz, field, name))
+                .buildMethod()
+        }
     }
 
     fun getSerializer(): JcMethod {

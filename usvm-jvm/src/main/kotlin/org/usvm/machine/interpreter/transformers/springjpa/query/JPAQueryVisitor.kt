@@ -38,7 +38,12 @@ import org.usvm.machine.interpreter.transformers.springjpa.query.expresion.TypeO
 import org.usvm.machine.interpreter.transformers.springjpa.query.expresion.Version
 import org.usvm.machine.interpreter.transformers.springjpa.query.function.FunctionCtx
 import org.usvm.machine.interpreter.transformers.springjpa.query.function.InstCtx
+import org.usvm.machine.interpreter.transformers.springjpa.query.join.FullJoin
+import org.usvm.machine.interpreter.transformers.springjpa.query.join.InnerJoin
+import org.usvm.machine.interpreter.transformers.springjpa.query.join.Join
 import org.usvm.machine.interpreter.transformers.springjpa.query.join.JoinCtx
+import org.usvm.machine.interpreter.transformers.springjpa.query.join.LeftJoin
+import org.usvm.machine.interpreter.transformers.springjpa.query.join.RightJoin
 import org.usvm.machine.interpreter.transformers.springjpa.query.path.GeneralPathCtx
 import org.usvm.machine.interpreter.transformers.springjpa.query.path.PathCtx
 import org.usvm.machine.interpreter.transformers.springjpa.query.path.SimplePathCtx
@@ -64,7 +69,7 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     }
 
     override fun visitSelectStatement(ctx: HqlParser.SelectStatementContext): SelectCtx {
-        return visitChildren(ctx) as SelectCtx
+        return visit(ctx.queryExpression()) as SelectCtx
     }
 
     override fun visitSubquery(ctx: HqlParser.SubqueryContext): SelectCtx {
@@ -241,24 +246,41 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         TODO("Deprecate syntax")
     }
 
-    override fun visitJoin(ctx: HqlParser.JoinContext): JoinCtx.Join {
-        TODO("Not yet implemented")
+    override fun visitJoin(ctx: HqlParser.JoinContext): Join {
+        val pred = ctx.joinRestriction()?.let { visitJoinRestriction(it) }
+        val target = visit(ctx.joinTarget()) as PathCtx // TODO: visitJoinSubquery
+        val join = resolveJoinType(ctx.joinType(), pred, target)
+        return join
+    }
+
+    private fun resolveJoinType(ctx: HqlParser.JoinTypeContext?, pred: PredicateCtx?, target: PathCtx): Join {
+        if (ctx == null || ctx.childCount == 0) return InnerJoin(target, pred)
+        return when (ctx.getChild(0).let { it as TerminalNode }.symbol.type) {
+            HqlParser.FULL -> FullJoin(target, pred)
+            HqlParser.LEFT -> LeftJoin(target, pred)
+            HqlParser.RIGHT -> RightJoin(target, pred)
+            HqlParser.INNER -> InnerJoin(target, pred)
+            else -> InnerJoin(target, pred)
+        }
     }
 
     override fun visitJoinType(ctx: HqlParser.JoinTypeContext?): Any {
-        TODO("Not yet implemented")
+        TODO("Use resolveJoinType")
     }
 
-    override fun visitJoinPath(ctx: HqlParser.JoinPathContext?): Any {
-        TODO("Not yet implemented")
+    override fun visitJoinPath(ctx: HqlParser.JoinPathContext): PathCtx {
+        val alias = visitVariable(ctx.variable())
+        val path = visitPath(ctx.path())
+        path.alias = alias
+        return path
     }
 
     override fun visitJoinSubquery(ctx: HqlParser.JoinSubqueryContext?): Any {
         TODO("Not yet implemented")
     }
 
-    override fun visitJoinRestriction(ctx: HqlParser.JoinRestrictionContext?): Any {
-        TODO("Not yet implemented")
+    override fun visitJoinRestriction(ctx: HqlParser.JoinRestrictionContext): PredicateCtx {
+        return visit(ctx.predicate()) as PredicateCtx
     }
 
     override fun visitSelectClause(ctx: HqlParser.SelectClauseContext?): SelectFunCtx? {
@@ -337,7 +359,10 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     }
 
     override fun visitPath(ctx: HqlParser.PathContext): PathCtx {
-        TODO("Not yet implemented")
+        val path = visitGeneralPathFragment(ctx.generalPathFragment())
+        val cont = visitPathContinuation(ctx.pathContinuation())
+        // ctx.syntacticDomainPath() TODO: ??
+        return PathCtx(path, cont, null)
     }
 
     override fun visitPathContinuation(ctx: HqlParser.PathContinuationContext?): SimplePathCtx? {
@@ -523,8 +548,8 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     override fun visitLikePredicate(ctx: HqlParser.LikePredicateContext): PredicateCtx {
         val expr = visit(ctx.expression(0)) as ExpressionCtx
         val pattern = visit(ctx.expression(1)) as ExpressionCtx
-        val like = visitLikeEscape(ctx.likeEscape())
-        val pred = Function.Like(expr, pattern, like, ctx.LIKE() != null)
+        val escape = visitLikeEscape(ctx.likeEscape())
+        val pred = Function.Like(expr, pattern, escape, ctx.LIKE() != null)
         return pred.makeNot(ctx.NOT())
     }
 
@@ -621,10 +646,11 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
         TODO("Not yet implemented")
     }
 
-    override fun visitLikeEscape(ctx: HqlParser.LikeEscapeContext?): Function.Like.LikeCtx? {
+    override fun visitLikeEscape(ctx: HqlParser.LikeEscapeContext?): ExpressionCtx? {
         if (ctx == null) return null
-
-        TODO("Not yet implemented")
+        val node = ctx.getChild(0)
+        if (node !is TerminalNode) return visit(node) as ExpressionCtx
+        return visitString(node)
     }
 
     override fun visitAdditionExpression(ctx: HqlParser.AdditionExpressionContext): ExpressionCtx {
@@ -867,6 +893,10 @@ class JPAQueryVisitor : AbstractParseTreeVisitor<Any>(), HqlParserVisitor<Any> {
     override fun visitLiteral(ctx: HqlParser.LiteralContext): ExpressionCtx {
         val node = ctx.getChild(0)
         if (node !is TerminalNode) return visit(node) as ExpressionCtx
+        return visitString(node)
+    }
+
+    private fun visitString(node: TerminalNode): ExpressionCtx {
         return when (node.symbol.type) {
             HqlParser.STRING_LITERAL -> LString(unquoteStringLiteral(node.text))
             HqlParser.JAVA_STRING_LITERAL -> LString(unquoteJavaStringLiteral(node.text))

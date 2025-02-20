@@ -1,7 +1,9 @@
 package org.usvm.machine.interpreter.transformers.springjpa
 
+import org.jacodb.api.jvm.JcClassOrInterface
 import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcClasspath
+import org.jacodb.api.jvm.JcField
 import org.jacodb.api.jvm.JcMethod
 import org.jacodb.api.jvm.JcType
 import org.jacodb.api.jvm.cfg.JcArgument
@@ -42,6 +44,7 @@ abstract class JcDataclassFunctionTransformer(
     val listType = cp.findType(LIST_WRAPPER) as JcClassType
     val mapType = cp.findType(MAP_TABLE) as JcClassType
     val filterType = cp.findType(FILTER_TABLE) as JcClassType
+    val cTyp = cp.findType("java.lang.Class")
 }
 
 class JcInitTransformer(
@@ -169,7 +172,6 @@ class JcInitTransformer(
         val sel = JcDataclassTransformer.relatedLambda(clazz, rel.origField)!!.single { it.generatedBtwSelect }
         val selVar = generateLambda("${fieldName}Sel", sel)
 
-        val cTyp = cp.findType("java.lang.Class")
         val typeVar = nextLocalVar("${fieldName}MapType", cTyp)
         val type = JcClassConstant(sel.returnType.toJcType(cp)!!, cTyp)
         addInstruction { loc -> JcAssignInst(loc, typeVar, type) }
@@ -199,6 +201,54 @@ class JcInitTransformer(
 
         return generateNewWithInit("${fieldName}Wrapper", type, listOf(tblVar))
     }
+}
+
+// new(Object[] row) {
+// ITable<SomeClass> tbl1 = new MappedTable(Databases.some_class, SomeClass::new);
+// ...
+// return new(row, tbl1, tbl2, ...  )
+// }
+class JcFetchedInitTransformer(
+    cp: JcClasspath,
+    val classTable: TableInfo.TableWithIdInfo,
+    genInit: JcMethod
+) : JcDataclassFunctionTransformer(cp) {
+
+    val clazz = classTable.origClass
+    val classType = clazz.toType()
+    val thisVal = JcThis(classType)
+    val databases = cp.findType(DATABASES) as JcClassType
+    val initRef = VirtualMethodRefImpl.of(classType, JcTypedMethodImpl(classType, genInit, JcSubstitutorImpl()))
+
+    override fun condition(method: JcMethod): Boolean {
+        return method.generatedFetchInit
+    }
+
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
+        val fetches = classTable.orderedRelations().mapIndexed { ix, rel ->
+            val relTblName = rel.toTableName(cp)
+            val tblField = databases.fields.single { it.name == relTblName }
+            val tblV = nextLocalVar("fetchTbl$ix", cp.findType(ITABLE))
+            val tblRef = JcFieldRef(null, tblField)
+            addInstruction { loc -> JcAssignInst(loc, tblV, tblRef) }
+
+            val fetchInit = rel.relatedDataclass(cp).declaredMethods.single {
+                it.name == "<init>" && it.generatedFetchInit
+            }
+
+            val typeVar = nextLocalVar("fetchType$ix", cTyp)
+            val type = JcClassConstant(rel.relatedDataclassType(cp), cTyp)
+            addInstruction { loc -> JcAssignInst(loc, typeVar, type) }
+
+            val const = generateLambda("initMapper$ix", fetchInit)
+            generateNewWithInit("mappedFecth$ix", mapType, listOf(tblV, const, typeVar))
+        }
+
+        val args = listOf(method.parameters.single().toArgument) + fetches
+        val call = JcSpecialCallExpr(initRef, thisVal, args)
+        addInstruction { loc -> JcCallInst(loc, call) }
+    }
+
 }
 
 // Integer $getId() { return id; }
@@ -231,7 +281,39 @@ class JcGetIdTransformer(
     }
 }
 
-// T $identity(T v) { return v; }
+// fieldType $getField() { return field; }
+class JcGetterTransformer(
+    val clazz: JcClassOrInterface,
+    val field: JcField,
+    val name: String
+) : JcBodyFillerFeature() {
+
+    override fun condition(method: JcMethod): Boolean {
+        return name == method.name && method.generatedGetter
+    }
+
+    override fun BlockGenerationContext.generateBody(method: JcMethod) {
+
+        val cp = clazz.classpath
+        val classType = clazz.typename.toJcType(cp)!!
+        val type = field.type.toJcType(cp)!!
+
+        val lhv = nextLocalVar("%0", type)
+        val rhv = JcFieldRef(
+            JcThis(classType), JcTypedFieldImpl(
+                clazz.toType(),
+                field,
+                JcSubstitutorImpl()
+            )
+        )
+        addInstruction { loc -> JcAssignInst(loc, lhv, rhv) }
+
+        addInstruction { loc -> JcReturnInst(loc, lhv) }
+    }
+
+}
+
+// someType $identity(someType v) { return v; }
 class JcIdentityTransformer(val type: JcType) : JcBodyFillerFeature() {
 
     override fun condition(method: JcMethod): Boolean {

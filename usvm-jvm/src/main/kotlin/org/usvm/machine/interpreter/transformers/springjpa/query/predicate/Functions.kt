@@ -1,8 +1,11 @@
 package org.usvm.machine.interpreter.transformers.springjpa.query.predicate
 
+import org.jacodb.api.jvm.cfg.JcBool
 import org.jacodb.api.jvm.cfg.JcLocalVar
+import org.jacodb.api.jvm.ext.boolean
 import org.usvm.machine.interpreter.transformers.springjpa.query.MethodCtx
 import org.usvm.machine.interpreter.transformers.springjpa.query.expresion.ExpressionCtx
+import org.usvm.machine.interpreter.transformers.springjpa.query.expresion.LNull
 import org.usvm.machine.interpreter.transformers.springjpa.query.path.PathCtx
 import org.usvm.machine.interpreter.transformers.springjpa.query.path.SimplePathCtx
 
@@ -55,13 +58,16 @@ abstract class Function : PredicateCtx() {
     class Like(
         val expression: ExpressionCtx,
         val pattern: ExpressionCtx,
-        val likeEscape: LikeCtx?,
+        val escape: ExpressionCtx?,
         val caseSenc: Boolean
     ) : Function() {
-        class LikeCtx()
-
         override fun genInst(ctx: MethodCtx): JcLocalVar {
-            TODO("Not yet implemented")
+            val expr = expression.genInst(ctx)
+            val pattern = pattern.genInst(ctx)
+            val esc = escape?.genInst(ctx) ?: LNull().genInst(ctx)
+            val senc = JcBool(caseSenc, ctx.cp.boolean)
+            val name = "${ctx.getVarName()}#like"
+            return ctx.genStaticCall(name, "like", listOf(expr, pattern, esc, senc))
         }
     }
 
@@ -70,8 +76,22 @@ abstract class Function : PredicateCtx() {
             Equal, NotEqual, Greater, GreaterEqual, Less, LessEqual
         }
 
+        private fun getMethodName(): String {
+            return when (operator) {
+                Operator.Equal -> "equals"
+                Operator.NotEqual -> "notEquals"
+                Operator.Greater -> "greater"
+                Operator.GreaterEqual -> "greaterEq"
+                Operator.Less -> "less"
+                Operator.LessEqual -> "lessEq"
+            }
+        }
+
         override fun genInst(ctx: MethodCtx): JcLocalVar {
-            TODO("Not yet implemented")
+            val l = left.genInst(ctx)
+            val r = right.genInst(ctx)
+
+            return ctx.genStaticCall(ctx.getVarName(), getMethodName(), listOf(l, r))
         }
     }
 

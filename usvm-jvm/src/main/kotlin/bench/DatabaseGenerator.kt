@@ -27,9 +27,9 @@ import org.usvm.util.jvmDescriptor
 import java.nio.file.Path
 
 class DatabaseGenerator(
-    private val cp : JcClasspath,
+    private val cp: JcClasspath,
     private val dir: Path,
-    private val repositories :  List<JcClassOrInterface>
+    private val repositories: List<JcClassOrInterface>
 ) {
 
     val databasesClass = cp.findClass("generated.org.springframework.boot.databases.SpringDatabases")
@@ -60,8 +60,10 @@ class DatabaseGenerator(
             tableInfoCollector.collectTable(dataClass)
         }
 
+        val className = "SpringDatabases"
         databasesClass.withAsmNode { classNode ->
 
+            classNode.name = className
             classNode.fields.removeIf { it.name.equals("_blanck") }
             classNode.fields.removeIf { it.name.equals("_blanckAdd") }
             rawInstList.removeAll(listOf(2..19).flatten().map { rawInstList[it] })
@@ -77,24 +79,24 @@ class DatabaseGenerator(
                 check(asmMethods.replace(asmMethod, newNode))
             }
 
-            classNode.write(cp, dir.resolve("SpringDatabases.class"), checkClass = true)
+            classNode.write(cp, dir.resolve("$className.class"), checkClass = true)
         }
     }
 }
 
 class LocalVarsManager {
 
-    private var lastIndex : Int
+    private var lastIndex: Int
 
     constructor(startIndex: Int) {
         lastIndex = if (startIndex < 0) 0 else startIndex
     }
 
-    private fun newName() : String {
+    private fun newName(): String {
         return "%${lastIndex}"
     }
 
-    fun newLocalVar(type : TypeName) : JcRawLocalVar {
+    fun newLocalVar(type: TypeName): JcRawLocalVar {
         val v = JcRawLocalVar(lastIndex, newName(), type)
         lastIndex++
 
@@ -103,7 +105,7 @@ class LocalVarsManager {
 }
 
 fun TableInfo.generate(
-    generator : DatabaseGenerator,
+    generator: DatabaseGenerator,
     localVars: LocalVarsManager,
     classNode: ClassNode,
     rawInstList: JcMutableInstList<JcRawInst>

@@ -38,7 +38,7 @@ class JcMethodBuilder(
         return this.also { it.desc = desc }
     }
 
-    fun setSignature(sig: String): JcMethodBuilder {
+    fun setSignature(sig: String?): JcMethodBuilder {
         return this.also { signature = sig }
     }
 

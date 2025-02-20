@@ -1,5 +1,7 @@
 package org.usvm.machine.interpreter.transformers.springjpa.query.type
 
+import kotlinx.collections.immutable.toPersistentList
+import org.jacodb.api.jvm.JcClassType
 import org.jacodb.api.jvm.JcType
 import org.jacodb.api.jvm.ext.toType
 import org.usvm.instrumentation.util.toJcType
@@ -19,21 +21,22 @@ class Null : TypeCtx() {
 
 class Param(val param: Parameter) : TypeCtx() {
     override fun getType(info: CommonInfo): JcType {
-        TODO("Not yet implemented")
+        val pos = param.position(info)
+        return info.origMethod.parameters.get(pos).type.toJcType(info.cp)!!
     }
 }
 
 class Path(val name: SimplePathCtx) : TypeCtx() {
     override fun getType(info: CommonInfo): JcType {
-        val tbl = info.tblAliases[name.root]
-        return if (tbl != null && name.cont.isEmpty()) {
-            val tblInfo = tbl.getTbl(info)
-            val origClass = tblInfo.origClass
-            origClass.toType()
+        val aliased = info.aliases[name.root]
+        val positions = info.positions[aliased]!!
+        return if (name.isSimple()) {
+            positions.values.first().first.enclosingClass.toType()
         } else {
-            val fieldName = name.cont.single() // TODO:
-            val pos = info.positions.single { it.origField.name == fieldName }
-            pos.origField.type.toJcType(info.cp)!!
+            val fst = positions[name.cont.first()]!!.first.type.toJcType(info.cp)!!
+            name.cont.toPersistentList().removeAt(0).fold(fst) { acc, nameField ->
+                (acc as JcClassType).declaredFields.single { it.name == nameField }.type
+            }
         }
     }
 }
